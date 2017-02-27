@@ -101,7 +101,7 @@ function _installSubscriptions {
             then
                 ${MKDIR} -p ${DEFAULTDIR} || error "Failed to create default dir ${DEFAULTDIR}"
             fi
-            perl -ne 'if (/DEFAULT%START%/../DEFAULT%END%/) {print unless /DEFAULT%(START|END)%/}' ${sub} > ${prog}
+            ${PERL} -ne 'if (/DEFAULT%START%/../DEFAULT%END%/) {print unless /DEFAULT%(START|END)%/}' ${sub} > ${prog}
         fi
     done
 }
@@ -234,7 +234,7 @@ function services() {
        (export LIMIT; ${PERL} -pe 's:^./::; if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMTI}"))}; print if /$pat/' ) | while read sub
     do
         echo ${sub##*/} ${sub}
-    done | ${SORT} -n | perl -pe 's/^[^\s]+\s//'
+    done | ${SORT} -n | ${PERL} -pe 's/^[^\s]+\s//'
 }
 function unsubscribe {
     local sub
