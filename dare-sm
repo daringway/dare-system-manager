@@ -2,17 +2,18 @@
 
 CONFIGDIR=/etc/daring
 SUBSCRIPTIONDIR=${CONFIGDIR}/subscriptions
+DEFAULTDIR=/etc/daring/default
 
 SH=/bin/sh
 CP=/bin/cp
-GREP=/usr/bin/egrep
-CAT=/bin/cat
-SED=/usr/bin/sed
 ID=/usr/bin/id
 FIND=/usr/bin/find
 SORT=/usr/bin/sort
-CUT=/usr/bin/cut
 RM=/bin/rm
+MKDIR=/bin/mkdir
+RMDIR=/bin/rmdir
+# using perl removes the need for grep, sed, cat
+PERL=/usr/bin/perl
 
 PROG=$(basename $0)
 RETVAL=0
@@ -75,15 +76,33 @@ function checkRoot {
         exit 128
     fi
 }
+
+function _prog_from_service {
+    # Format of subscription/00_prog
+    local service
+    service=$!
+    return ${service##*/*[0-9]-}
+}
+
 function _installSubscriptions {
     local DIR
     local sub
+    local prog
     DIR=$1
-    mkdir -p ${SUBSCRIPTIONDIR}/${DIR} || error "Failed to create subscripiton directory ${SUBSCRIPTIONDIR}/${DIR}"
+    ${MKDIR} -p ${SUBSCRIPTIONDIR}/${DIR} || error "Failed to create subscripiton directory ${SUBSCRIPTIONDIR}/${DIR}"
     for sub in $(ls ${DIR}/[0-9]* 2>/dev/null)
     do
         log "Installing subscription ${SUBDIR}/${DIR}/${sub}"
         ${CP} ${sub} ${SUBSCRIPTIONDIR}/${DIR} || error "Failed to install subscription to ${SUBSCRIPTIONDIR}/${DIR}"
+        prog=${DEFAULTDIR}/${sub##*[0-9]-}
+        if [ ! -e ${prog} ]
+        then
+            if [ ! -d ${DEFAULTDIR} ]
+            then
+                ${MKDIR} -p ${DEFAULTDIR} || error "Failed to create default dir ${DEFAULTDIR}"
+            fi
+            perl -ne 'if (/DEFAULT%START%/../DEFAULT%END%/) {print unless /DEFAULT%(START|END)%/}' ${sub} > ${prog}
+        fi
     done
 }
 function _subscribeDir() {
@@ -185,41 +204,52 @@ function subscriptions() {
     if [[ $# -eq 0 ]]
     then
         printHelp
+    elif [[ ! -d ${SUBSCRIPTIONDIR} ]]
+    then
+        return
     elif [[ $1 == "all" ]]
     then
-        LIMIT=${CAT}
+        LIMIT='*'
     else
-        LIMIT="${GREP} $(echo $* | ${SED} -e 's: :|:g')"
+        LIMIT="$*"
     fi
-    (cd $SUBSCRIPTIONDIR; ${FIND} . -name '[0-9]*' -type f) | ${SED} -e 's:^./::' | $LIMIT | while read sub
+    (cd $SUBSCRIPTIONDIR; ${FIND} . -name '[0-9]*' -type f) |
+        (export LIMIT; ${PERL} -pe 's:^./::; if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMTI}"))}; print if /$pat/' ) | while read sub
     do
         echo ${sub%/*}
     done | ${SORT} -u
 }
 function services() {
     local sub
-    local LIMIT
     if [[ $# -eq 0 ]]
     then
         printHelp
     elif [[ $1 == "all" ]]
     then
-        LIMIT=${CAT}
+        LIMIT='*'
     else
-        LIMIT="${GREP} $(echo $* | ${SED} -e 's: :|:g')"
+        LIMIT="$*"
     fi
-    (cd $SUBSCRIPTIONDIR; ${FIND} . -name '[0-9]*' -type f) | ${SED} -e 's:^./::' | $LIMIT | while read sub
+    (cd $SUBSCRIPTIONDIR; ${FIND} . -name '[0-9]*' -type f) |
+       (export LIMIT; ${PERL} -pe 's:^./::; if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMTI}"))}; print if /$pat/' ) | while read sub
     do
         echo ${sub##*/} ${sub}
-    done | ${SORT} -n | ${CUT} -d' ' -f2
+    done | ${SORT} -n | perl -pe 's/^[^\s]+\s//'
 }
 function unsubscribe {
     local sub
+    local prog
     subscriptions $* | while read sub
     do
         log unsubscribe $sub
+        for prog in $(ls ${SUBSCRIPTIONDIR}/${sub})
+        do
+            log removing defaults for ${prog}
+            ${RM} ${DEFAULTDIR}/${prog##*[0-9]-}
+        done
         ${RM} -r ${SUBSCRIPTIONDIR}/$sub
     done
+    ${FIND} ${SUBSCRIPTIONDIR} -depth  -type d -empty -exec ${RMDIR}  {} \;
 }
 function firstboot {
     local RUN
@@ -271,16 +301,27 @@ function restart {
 }
 function enable {
     local RUN
+    local prog
     for RUN in $(services $*)
     do
-        echo "Enable NOT IMPLEMENTED ${RUN}"
+        echo "Enable ${RUN}"
+        prog=${DEFAULTDIR}/${RUN##*/*[0-9]-}
+        ${PERL} -ni -e '
+            if (/^\s*ENABLE=.*$/) { print "ENABLE=TRUE\n"; $DID=1}
+            else { print }
+            if (eof && ! $DID)      { print "ENABLE=TRUE\n"}' ${prog}
     done
 }
 function disable {
     local RUN
     for RUN in $(services $*)
     do
-        echo "Disable NOT IMPLEMENTED ${RUN}"
+        echo "Disable ${RUN}"
+        prog=${DEFAULTDIR}/${RUN##*/*[0-9]-}
+        ${PERL} -ni -e '
+            if (/^\s*ENABLE=.*$/) { print "ENABLE=FALSE\n"; $DID=1}
+            else { print }
+            if (eof && ! $DID)     { print "ENABLE=FALSE\n"}' ${prog}
     done
 }
 
