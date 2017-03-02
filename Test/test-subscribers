@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+
+cd $(dirname $0)
+DIR=subscribers
+SUBS="../dare-sm --runlist --dir ${DIR}"
+
+NOT_TOTAL=$(find ${DIR} -name '*NOT' | wc -l)
+RUN_TOTAL=$(find ${DIR} -name '*RUN' | wc -l)
+
+NOT_COUNT=$(${SUBS}  | grep NOT | wc -l )
+RUN_COUNT=$(${SUBS}  | wc -l )
+
+${SUBS}
+
+echo ${NOT_TOTAL} not scripts exist
+echo found ${NOT_COUNT} not scripts, should be 0,
+echo found ${RUN_COUNT} run scripts, should be ${RUN_TOTAL}
+
+if [ ${NOT_COUNT} -ne 0 ]
+then
+    echo "test FAILED"
+    exit 1
+elif [ ${RUN_COUNT} -ne ${RUN_TOTAL} ]
+then
+    echo "test FAILED"
+    exit 1
+else
+    echo "test PASSED"
+    exit 0
+fi

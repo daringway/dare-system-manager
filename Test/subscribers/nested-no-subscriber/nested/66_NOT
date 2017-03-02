@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+echo  only directories that have a subscriber are displayed

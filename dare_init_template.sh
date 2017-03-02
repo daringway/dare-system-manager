@@ -53,12 +53,6 @@ firstboot() {
     return $RETVAL
 }
 
-boot() {
-    echo -n "Boot"
-    RETVAL=0
-    return $RETVAL
-}
-
 update() {
     echo -n "Updating Package"
     RETVAL=0
@@ -134,7 +128,7 @@ case "$1" in
         RETVAL=$?
 	;;
     *)
-        echo "Usage: $0 {firstboot|boot|start|start|stop|status|try-restart|condrestart|restart|force-reload|reload}"
+        echo "Usage: $0 {firstboot|update|start|start|stop|status|try-restart|condrestart|restart|force-reload|reload}"
         RETVAL=3
 	;;
 esac

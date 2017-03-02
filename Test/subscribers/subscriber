@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Must have subscriber in root directory
+#ls -d *
+echo *
