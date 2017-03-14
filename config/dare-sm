@@ -4,17 +4,19 @@ CONFIGDIR=/etc/daring
 SUBSCRIPTIONDIR=${CONFIGDIR}/subscriptions
 DEFAULTDIR=/etc/daring/default
 
-SH=/bin/sh
-CP=/bin/cp
-ID=/usr/bin/id
-FIND=/usr/bin/find
-SORT=/usr/bin/sort
-RM=/bin/rm
-MKDIR=/bin/mkdir
-RMDIR=/bin/rmdir
-LS=/bin/ls
+PATH=/sbin:/bin:/usr/bin
+
+SH=sh
+CP=cp
+ID=id
+FIND=find
+SORT=sort
+RM=rm
+MKDIR=mkdir
+RMDIR=rmdir
+LS=ls
 # using perl removes the need for grep, sed, cat
-PERL=/usr/bin/perl
+PERL=perl
 
 PROG=$(basename $0)
 RETVAL=0
