@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+if [ -f /etc/os-release ]
+then
+    eval $(cat /etc/os-release)
+    if [[ $ID == "amzn" ]]
+    then
+        echo .
+        echo ${VERSION_ID}
+    fi
+fi

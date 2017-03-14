@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+if [ $(uname -s) == 'Darwin' ]
+then
+    VERSION=$(/usr/bin/sw_vers -productVersion)
+    MAJOR=${VERSION%.*}
+    MINOR=${VERSION##*.}
+
+    echo .
+    echo ${MAJOR}
+    echo ${MAJOR}/${MINOR}
+fi

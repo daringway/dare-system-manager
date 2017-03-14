@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# Must manually specifiy
+exit 1

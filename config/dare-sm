@@ -1,0 +1,442 @@
+#!/usr/bin/env sh
+
+CONFIGDIR=/etc/daring
+SUBSCRIPTIONDIR=${CONFIGDIR}/subscriptions
+DEFAULTDIR=/etc/daring/default
+
+SH=/bin/sh
+CP=/bin/cp
+ID=/usr/bin/id
+FIND=/usr/bin/find
+SORT=/usr/bin/sort
+RM=/bin/rm
+MKDIR=/bin/mkdir
+RMDIR=/bin/rmdir
+LS=/bin/ls
+# using perl removes the need for grep, sed, cat
+PERL=/usr/bin/perl
+
+PROG=$(basename $0)
+RETVAL=0
+SUBDIR=""
+
+function printHelp {
+   echo $* 1>&2
+   echo "
+  ${PROG} subscriptions [<search>]*
+    List current subscriptions.
+
+  ${PROG} subscribe <subscription>+
+    Manual add subscription. Must be used with install.
+
+  ${PROG} subscribe --dir <directory> [<selection>]*  [--dir <directory> [<selections>]* ]*
+    Update and install subscription list
+
+  ${PROG} install --dir <directory> [--dir <directory>]*
+    If you have a seperate set of service directories from the subscribe directory.
+
+  ${PROG} services [<search>]*
+    List services
+
+  ${PROG} update
+    Update dare-sm
+
+  ${PROG} <command> all
+  ${PROG} <command> [<search>]*
+  <command>
+    firstboot   : Run during first boot of instance
+    update      : Upgrade the services
+    start       : Start services
+    stop        : Stop services
+    restart     ; Restart services
+    status      : Status of services
+    unsubscribe : Remove a service from local configuration
+    enable      : Temporary enable  a service
+    disable     : Temporary disable a service
+   " 1>&2
+   exit 1
+}
+function abspath {
+    if [[ -d "$1" ]]
+    then
+        pushd "$1" >/dev/null
+        pwd
+        popd >/dev/null
+    elif [[ -e $1 ]]
+    then
+        pushd "$(dirname "$1")" >/dev/null
+        echo "$(pwd)/$(basename "$1")"
+        popd >/dev/null
+    else
+        echo "$1" does not exist! >&2
+        return 127
+    fi
+}
+function error {
+    echo $*
+    exit 128
+}
+function log {
+    echo $*
+}
+function checkRoot {
+    if [[ $( ${ID} -u) -ne "0" ]]
+    then
+        error "Must execute command as root"
+        exit 128
+    fi
+}
+
+function _prog_from_service {
+    # Format of subscription/00_prog
+    local service
+    service=$!
+    return ${service##*/*[0-9][-_]}
+}
+
+function _installSubscriptions {
+    local DIR
+    local ETCSUBDIR
+    local SUBSCRIPTION
+    local sub
+    local prog
+    DIR=$1
+    SUBSCRIPTION=$(echo $DIR | perl -pe 's#/#:#g')
+    ETCSUBDIR=${SUBSCRIPTIONDIR}/${SUBSCRIPTION}
+    ETCDEFAULTPREFIX=${DEFAULTDIR}/${SUBSCRIPTION}
+
+    if [ ! -d ${DEFAULTDIR} ]
+    then
+        ${MKDIR} -p ${DEFAULTDIR} || error "Failed to create default dir ${DEFAULTDIR}"
+    fi
+    if [ ! -d ${ETCSUBDIR} ]
+    then
+        ${MKDIR} -p ${ETCSUBDIR} || error "Failed to create subscripiton directory ${ETCSUBDIR}"
+    fi
+    for sub in $(ls ${DIR}/[0-9]* 2>/dev/null)
+    do
+        log "Installing subscription ${SUBDIR}/${DIR}/${sub}"
+        ${CP} ${sub} ${ETCSUBDIR} || error "Failed to install subscription to ${SETCSUBDIR}"
+        prog=${ETCDEFAULTPREFIX}:${sub##*[0-9][-_]}
+        if [ ! -e ${prog} ]
+        then
+            ${PERL} -ne 'if (/DEFAULT%START%/../DEFAULT%END%/) {print unless /DEFAULT%(START|END)%/}' ${sub} > ${prog}
+        fi
+    done
+}
+function _subscribeDir() {
+    local dir
+    local dir2
+    local fdir
+    local list
+    local EC=0
+    if [ "$1" == "-e" ]
+    then
+        EC=1
+        shift
+    fi
+    dir=$1
+    if [ -f ${dir}/subscriber ]
+    then
+        list=$(cd ${dir}; ${SH} subscriber)
+        if [ "$?" -eq "0" ]
+        then
+            if [ "$EC" -eq "1" ]
+            then
+                _installSubscriptions ${dir}
+            fi
+            for dir2 in ${list}
+            do
+                if [ ${dir2} == '.' ]
+                then
+                    _installSubscriptions ${dir}
+                else
+                    if [ ${dir} == "." ]
+                    then
+                        fdir=${dir2}
+                    else
+                        fdir="${dir}/${dir2}"
+                    fi
+                    if [ -d ${fdir} ]
+                    then
+                        _subscribeDir -e ${fdir}
+                    fi
+                fi
+            done
+        fi
+    elif [ -d ${dir} ]
+    then
+        if [ "$EC" -eq "1" ]
+        then
+            _installSubscriptions ${dir}
+        fi
+        for dir2 in $(ls ${dir} 2>/dev/null)
+        do
+            if [ ${dir} == "." ]
+            then
+                fdir=${dir2}
+            else
+                fdir="${dir}/${dir2}"
+            fi
+            if [ -d ${fdir} ]
+            then
+                _subscribeDir ${fdir}
+            fi
+        done
+    fi
+}
+function subscribe {
+    if [[ $1 != "--dir" ]]
+    then
+        local SUBSCRIPTION
+        for SUBSCRIPTION in $*
+        do
+            if [ ! -d ${SUBSCRIPTIONDIR}/${SUBSCRIPTION} ]
+            then
+                ${MKDIR} -p ls /${SUBSCRIPTIONDIR}/${SUBSCRIPTION} || error "Failed to create subscription directory ${ETCSUBDIR}"
+            fi
+        done
+    else
+        while [[ $# -gt 0 ]]
+        do
+            if [[ "$1" == "--dir" ]]
+            then
+                SUBDIR=$2
+                shift
+                shift
+                if [[ ! -e ${SUBDIR}/subscriber ]]
+                then
+                    error "subscriber must exist in root directory $(abspath ${SUBDIR})"
+                fi
+                if [[ $# -eq 0 || $1 == "--dir" ]]
+                then
+                    (cd ${SUBDIR} &&  _subscribeDir .)
+                fi
+            else
+                if [[ "$PREFIX" == "1" ]]
+                then
+                    _subscribeDir -e $(abspath ${SUBDIR}/${1})
+                else
+                    (cd ${SUBDIR}; _subscribeDir -e ${1})
+                fi
+                shift
+            fi
+        done
+    fi
+}
+
+function subscriptions() {
+    local sub
+        local LIMIT
+    if [[ $# -eq 0 ]]
+    then
+        printHelp "list of subscriptions or all"
+    elif [[ $1 == "all" ]]
+    then
+        LIMIT='.'
+    else
+        LIMIT="$*"
+    fi
+    ( cd $SUBSCRIPTIONDIR;
+      export LIMIT;
+      ${LS} |
+      ${PERL} -ne '
+        if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMIT}"))};
+        print if /$pat/;
+        '
+    )
+}
+function install {
+    if [[ $1 != "--dir" ]]
+    then
+        printHelp "expected --dir"
+    fi
+    local SUBSCRIPTION
+    local SUBDIR
+    while [[ $# -gt 0 ]]
+    do
+        if [[ "$1" == "--dir" ]]
+        then
+            SUBDIR=$2
+            shift
+            shift
+            for SUBSCRIPTION in $(subscriptions all)
+            do
+                if [ -d ${SUBDIR}/${SUBSCRIPTION} ]
+                then
+                    (cd ${SUBDIR} && _installSubscriptions ${SUBSCRIPTION})
+                fi
+            done
+        else
+           printHelp "expected --dir"
+        fi
+    done
+}
+function services() {
+    local sub
+    local LIMIT
+    if [[ $# -eq 0 ]]
+    then
+        printHelp "expected search pattern or all"
+    elif [[ $1 == "all" ]]
+    then
+        LIMIT='.'
+    else
+        LIMIT="$*"
+    fi
+    (  export LIMIT;
+      cd $SUBSCRIPTIONDIR && ${LS} */[0-9]* |
+      ${PERL} -ne '
+          if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMIT}"))};
+          print if /$pat/;
+          '
+    ) | ${SORT} -n -t/ -k2
+}
+function unsubscribe {
+    local sub
+    local prog
+
+    subscriptions $* | while read sub
+    do
+        log unsubscribe $sub
+        for prog in $(cd ${DEFAULTDIR} && ls ${sub}:* 2>/dev/null)
+        do
+            log removing defaults for ${prog}
+            ${RM} ${DEFAULTDIR}/${prog} || error "Failed to remove default file ${DEFAULTDIR}/${prog}"
+        done
+        ${RM} -r ${SUBSCRIPTIONDIR}/$sub || error "Failed to remove subscription directory ${SUBSCRIPTIONDIR}/$sub"
+    done
+}
+function firstboot {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "Firstboot ${RUN}"
+        ${SH} ${SUBSCRIPTIONDIR}/${RUN} firstboot
+    done
+}
+function upgrade {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "upgrade ${RUN}"
+        ${SH} ${SUBSCRIPTIONDIR}/${RUN} upgrade
+    done
+}
+function start {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "Starting ${RUN}"
+        ${SH} ${SUBSCRIPTIONDIR}/${RUN} start
+    done
+}
+function status {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "Status ${RUN}"
+        ${SH} ${SUBSCRIPTIONDIR}/${RUN} status
+    done
+}
+function stop {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "Stopping ${RUN}"
+        ${SH} ${SUBSCRIPTIONDIR}/${RUN} stop
+    done
+}
+function restart {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "Restarting ${RUN}"
+        ${SH} ${SUBSCRIPTIONDIR}/${RUN} restart
+    done
+}
+function enable {
+    local RUN
+    local prog
+    for RUN in $(services $*)
+    do
+        echo "Enable ${RUN}"
+        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
+        ${PERL} -ni -e '
+            if (/^\s*ENABLE=.*$/) { print "ENABLE=TRUE\n"; $DID=1}
+            else { print }
+            if (eof() && ! $DID)    { print "ENABLE=TRUE\n"}' ${prog}
+        echo "Enabled in ${prog}"
+    done
+}
+function disable {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "Disable ${RUN}"
+        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
+        ${PERL} -ni -e '
+            if (/^\s*ENABLE=.*$/) { print "ENABLE=FALSE\n"; $DID=1}
+            else { print }
+            if (eof && ! $DID)     { print "ENABLE=FALSE\n"}' ${prog}
+    done
+}
+
+COMMAND=$1
+shift
+case "${COMMAND}" in
+    subscribe)
+        checkRoot
+        subscribe $*
+	;;
+	install)
+        checkRoot
+        install $*
+	;;
+	unsubscribe)
+	    checkRoot
+        unsubscribe $*
+	;;
+	enable)
+	    checkRoot
+	    enable $*
+	;;
+	disable)
+	    checkRoot
+	    disable $*
+	;;
+	subscriptions)
+	    subscriptions ${*:-all}
+	;;
+	services)
+	    services ${*:-all}
+	;;
+	firstboot)
+	    checkRoot
+        firstboot $*
+    ;;
+	upgrade)
+	    checkRoot
+        upgrade $*
+    ;;
+    start)
+        checkRoot
+        start $*
+    ;;
+	stop)
+	    checkRoot
+        stop $*
+    ;;
+	restart)
+	    checkRoot
+        restart $*
+    ;;
+	status)
+        status $*
+    ;;
+    *)
+        printHelp
+        RETVAL=3
+    ;;
+esac
+exit $RETVAL
