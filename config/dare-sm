@@ -239,32 +239,7 @@ function subscriptions() {
         '
     )
 }
-function install {
-    if [[ $1 != "--dir" ]]
-    then
-        printHelp "expected --dir"
-    fi
-    local SUBSCRIPTION
-    local SUBDIR
-    while [[ $# -gt 0 ]]
-    do
-        if [[ "$1" == "--dir" ]]
-        then
-            SUBDIR=$2
-            shift
-            shift
-            for SUBSCRIPTION in $(subscriptions all)
-            do
-                if [ -d ${SUBDIR}/${SUBSCRIPTION} ]
-                then
-                    (cd ${SUBDIR} && _installSubscriptions ${SUBSCRIPTION})
-                fi
-            done
-        else
-           printHelp "expected --dir"
-        fi
-    done
-}
+
 function services() {
     local sub
     local LIMIT
@@ -300,12 +275,47 @@ function unsubscribe {
         ${RM} -r ${SUBSCRIPTIONDIR}/$sub || error "Failed to remove subscription directory ${SUBSCRIPTIONDIR}/$sub"
     done
 }
+
+function _markTRUE {
+    local RUN
+    local prog
+    local TAG
+    export TAG=$1
+    shift
+    for RUN in $(services $*)
+    do
+        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
+        ${PERL} -ni -e '
+            if (/^\s*$ENV{TAG}=.*$/) { print "$ENV{TAG}=TRUE\n"; $DID=1}
+            else { print }
+            if (eof() && ! $DID)    { print "$ENV{TAG}=TRUE\n"}' ${prog}
+    done
+}
+function _markFALSE {
+    local RUN
+    local prog
+    local TAG
+    export TAG=$1
+    shift
+    for RUN in $(services $*)
+    do
+        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
+        ${PERL} -ni -e '
+            if (/^\s*$ENV{TAG}=.*$/) { print "$ENV{TAG}=FALSE\n"; $DID=1}
+            else { print }
+            if (eof() && ! $DID)    { print "$ENV{TAG}=FALSE\n"}' ${prog}
+    done
+}
+
 function install {
     local RUN
     for RUN in $(services $*)
     do
         echo "Install ${RUN}"
-        ${SH} ${SUBSCRIPTIONDIR}/${RUN} install
+        if ${SH} ${SUBSCRIPTIONDIR}/${RUN} install
+        then
+            _markInstalled ${RUN}
+        fi
     done
 }
 function upgrade {
@@ -329,6 +339,7 @@ function status {
     for RUN in $(services $*)
     do
         echo "Status ${RUN}"
+        cat ${DEFAULTDIR}/$(echo ${RUN} | $PERL -pe 's#/#:#')
         ${SH} ${SUBSCRIPTIONDIR}/${RUN} status
     done
 }
@@ -349,30 +360,10 @@ function restart {
     done
 }
 function enable {
-    local RUN
-    local prog
-    for RUN in $(services $*)
-    do
-        echo "Enable ${RUN}"
-        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
-        ${PERL} -ni -e '
-            if (/^\s*ENABLE=.*$/) { print "ENABLE=TRUE\n"; $DID=1}
-            else { print }
-            if (eof() && ! $DID)    { print "ENABLE=TRUE\n"}' ${prog}
-        echo "Enabled in ${prog}"
-    done
+    _markTRUE ENABLE $*
 }
 function disable {
-    local RUN
-    for RUN in $(services $*)
-    do
-        echo "Disable ${RUN}"
-        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
-        ${PERL} -ni -e '
-            if (/^\s*ENABLE=.*$/) { print "ENABLE=FALSE\n"; $DID=1}
-            else { print }
-            if (eof && ! $DID)     { print "ENABLE=FALSE\n"}' ${prog}
-    done
+    _markFALSE ENABLE $*
 }
 
 COMMAND=$1
