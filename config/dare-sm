@@ -46,7 +46,7 @@ function printHelp {
   ${PROG} <command> all
   ${PROG} <command> [<search>]*
   <command>
-    firstboot   : Run during first boot of instance
+    install     : Run during first boot of instance
     update      : Upgrade the services
     start       : Start services
     stop        : Stop services
@@ -117,7 +117,7 @@ function _installSubscriptions {
     fi
     for sub in $(ls ${DIR}/[0-9]* 2>/dev/null)
     do
-        log "Installing subscription ${SUBDIR}/${DIR}/${sub}"
+        log "Installing subscription ${SUBDIR}/${sub}"
         ${CP} ${sub} ${ETCSUBDIR} || error "Failed to install subscription to ${SETCSUBDIR}"
         prog=${ETCDEFAULTPREFIX}:${sub##*[0-9][-_]}
         if [ ! -e ${prog} ]
@@ -126,65 +126,63 @@ function _installSubscriptions {
         fi
     done
 }
+function _descendDir() {
+    local dir
+    local dir2
+
+    dir=$1
+
+    if [ -d ${dir} ]
+    then
+        for dir2 in $(ls ${dir} 2>/dev/null)
+        do
+            if [ -d "${dir}/${dir2}" ]
+            then
+                _subscribeDir "${dir}/${dir2}"
+            fi
+        done
+    fi
+}
 function _subscribeDir() {
     local dir
     local dir2
     local fdir
     local list
-    local EC=0
-    if [ "$1" == "-e" ]
-    then
-        EC=1
-        shift
-    fi
+    local RC
+
     dir=$1
     if [ -f ${dir}/subscriber ]
     then
         list=$(cd ${dir}; ${SH} subscriber)
-        if [ "$?" -eq "0" ]
+        RC=$?
+        if [ "${dir}" == "." ]
         then
-            if [ "$EC" -eq "1" ]
+            fdir=""
+        else
+            fdir="${dir}/"
+        fi
+        for dir2 in ${list}
+        do
+            if [ ${dir2} == '.' ]
             then
                 _installSubscriptions ${dir}
-            fi
-            for dir2 in ${list}
-            do
-                if [ ${dir2} == '.' ]
+                if [ "$RC" -eq "0" ]
                 then
-                    _installSubscriptions ${dir}
-                else
-                    if [ ${dir} == "." ]
-                    then
-                        fdir=${dir2}
-                    else
-                        fdir="${dir}/${dir2}"
-                    fi
-                    if [ -d ${fdir} ]
-                    then
-                        _subscribeDir -e ${fdir}
-                    fi
+                    _descendDir ${dir}
                 fi
-            done
-        fi
-    elif [ -d ${dir} ]
-    then
-        if [ "$EC" -eq "1" ]
-        then
-            _installSubscriptions ${dir}
-        fi
-        for dir2 in $(ls ${dir} 2>/dev/null)
-        do
-            if [ ${dir} == "." ]
+            elif [ -d ${fdir}${dir2} ]
             then
-                fdir=${dir2}
-            else
-                fdir="${dir}/${dir2}"
-            fi
-            if [ -d ${fdir} ]
-            then
-                _subscribeDir ${fdir}
+                if [ -f ${fdir}${dir2}/subscriber ]
+                then
+                    _subscribeDir ${fdir}${dir2}
+                else
+                    _installSubscriptions ${fdir}${dir2}
+                    _descendDir ${fdir}${dir2}
+                fi
             fi
         done
+    else
+        _descendDir ${dir}
     fi
 }
 function subscribe {
@@ -309,12 +307,12 @@ function unsubscribe {
         ${RM} -r ${SUBSCRIPTIONDIR}/$sub || error "Failed to remove subscription directory ${SUBSCRIPTIONDIR}/$sub"
     done
 }
-function firstboot {
+function install {
     local RUN
     for RUN in $(services $*)
     do
-        echo "Firstboot ${RUN}"
-        ${SH} ${SUBSCRIPTIONDIR}/${RUN} firstboot
+        echo "Install ${RUN}"
+        ${SH} ${SUBSCRIPTIONDIR}/${RUN} install
     done
 }
 function upgrade {
@@ -413,9 +411,9 @@ case "${COMMAND}" in
 	services)
 	    services ${*:-all}
 	;;
-	firstboot)
+	install)
 	    checkRoot
-        firstboot $*
+        install $*
     ;;
 	upgrade)
 	    checkRoot
