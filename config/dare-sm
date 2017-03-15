@@ -103,7 +103,7 @@ function _installSubscriptions {
     local sub
     local prog
     DIR=$1
-    SUBSCRIPTION=$(echo $DIR | perl -pe 's#/#:#g')
+    SUBSCRIPTION=$(echo $DIR | perl -pe 's#/#:#g; s/\.://g')
     ETCSUBDIR=${SUBSCRIPTIONDIR}/${SUBSCRIPTION}
     ETCDEFAULTPREFIX=${DEFAULTDIR}/${SUBSCRIPTION}
 
@@ -146,7 +146,6 @@ function _descendDir() {
 function _subscribeDir() {
     local dir
     local dir2
-    local fdir
     local list
     local RC
 
@@ -155,12 +154,6 @@ function _subscribeDir() {
     then
         list=$(cd ${dir}; ${SH} subscriber)
         RC=$?
-        if [ "${dir}" == "." ]
-        then
-            fdir=""
-        else
-            fdir="${dir}/"
-        fi
         for dir2 in ${list}
         do
             if [ ${dir2} == '.' ]
@@ -170,14 +163,14 @@ function _subscribeDir() {
                 then
                     _descendDir ${dir}
                 fi
-            elif [ -d ${fdir}${dir2} ]
+            elif [ -d ${dir}/${dir2} ]
             then
-                if [ -f ${fdir}${dir2}/subscriber ]
+                if [ -f ${dir}/${dir2}/subscriber ]
                 then
-                    _subscribeDir ${fdir}${dir2}
+                    _subscribeDir ${dir}/${dir2}
                 else
-                    _installSubscriptions ${fdir}${dir2}
-                    _descendDir ${fdir}${dir2}
+                    _installSubscriptions ${dir}/${dir2}
+                    _descendDir ${dir}/${dir2}
                 fi
             fi
         done
