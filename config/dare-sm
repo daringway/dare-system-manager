@@ -1,8 +1,6 @@
 #!/usr/bin/env sh
 
-CONFIGDIR=/etc/daring
-SUBSCRIPTIONDIR=${CONFIGDIR}/subscriptions
-DEFAULTDIR=/etc/daring/default
+CONFIGDIR=/etc/daring/subscriptions
 
 PATH=/sbin:/bin:/usr/bin
 
@@ -15,6 +13,8 @@ RM=rm
 MKDIR=mkdir
 RMDIR=rmdir
 LS=ls
+CAT=cat
+GREP=grep
 # using perl removes the need for grep, sed, cat
 PERL=perl
 
@@ -81,6 +81,15 @@ function error {
 function log {
     echo $*
 }
+function _getSettingFile {
+    local file
+    file=${CONFIGDIR}/${1}.settings
+    if [ ! -f ${file} ]
+    then
+        touch ${file}
+    fi
+    echo ${file}
+}
 function checkRoot {
     if [[ $( ${ID} -u) -ne "0" ]]
     then
@@ -89,11 +98,28 @@ function checkRoot {
     fi
 }
 
-function _prog_from_service {
-    # Format of subscription/00_prog
-    local service
-    service=$!
-    return ${service##*/*[0-9][-_]}
+function _mark {
+    # PARAMETERS VALUE TAG [services pattern]
+    local RUN
+    local prog
+    local TAG
+    export TAG=$1
+    shift
+    export VALUE=$1
+    shift
+
+    for RUN in $(services $*)
+    do
+        prog=$(_getSettingFile ${RUN})
+        if [ -s ${prog} ]
+        then
+            ${PERL} -ni -e '
+                if (! /^\s*$ENV{TAG}=.*$/) { print };
+                if (eof) { print "$ENV{TAG}=$ENV{VALUE}\n"} ' ${prog}
+        else
+            echo "${TAG}=${VALUE}" > ${prog}
+        fi
+    done
 }
 
 function _installSubscriptions {
@@ -101,16 +127,11 @@ function _installSubscriptions {
     local ETCSUBDIR
     local SUBSCRIPTION
     local sub
-    local prog
+    local settings
     DIR=$1
     SUBSCRIPTION=$(echo $DIR | perl -pe 's#/#:#g; s/\.://g')
-    ETCSUBDIR=${SUBSCRIPTIONDIR}/${SUBSCRIPTION}
-    ETCDEFAULTPREFIX=${DEFAULTDIR}/${SUBSCRIPTION}
+    ETCSUBDIR=${CONFIGDIR}/${SUBSCRIPTION}
 
-    if [ ! -d ${DEFAULTDIR} ]
-    then
-        ${MKDIR} -p ${DEFAULTDIR} || error "Failed to create default dir ${DEFAULTDIR}"
-    fi
     if [ ! -d ${ETCSUBDIR} ]
     then
         ${MKDIR} -p ${ETCSUBDIR} || error "Failed to create subscripiton directory ${ETCSUBDIR}"
@@ -119,10 +140,11 @@ function _installSubscriptions {
     do
         log "Installing subscription ${SUBDIR}/${sub}"
         ${CP} ${sub} ${ETCSUBDIR} || error "Failed to install subscription to ${SETCSUBDIR}"
-        prog=${ETCDEFAULTPREFIX}:${sub##*[0-9][-_]}
-        if [ ! -e ${prog} ]
+
+        settings=$(_getSettingFile ${SUBSCRIPTION}/$(basename ${sub}))
+        if [ ! -s ${settings} ]
         then
-            ${PERL} -ne 'if (/DEFAULT%START%/../DEFAULT%END%/) {print unless /DEFAULT%(START|END)%/}' ${sub} > ${prog}
+            ${PERL} -ne 'if (/DEFAULT%START%/../DEFAULT%END%/) {print unless /DEFAULT%(START|END)%/}' ${sub} > ${settings}
         fi
     done
 }
@@ -184,9 +206,9 @@ function subscribe {
         local SUBSCRIPTION
         for SUBSCRIPTION in $*
         do
-            if [ ! -d ${SUBSCRIPTIONDIR}/${SUBSCRIPTION} ]
+            if [ ! -d ${CONFIGDIR}/${SUBSCRIPTION} ]
             then
-                ${MKDIR} -p ls /${SUBSCRIPTIONDIR}/${SUBSCRIPTION} || error "Failed to create subscription directory ${ETCSUBDIR}"
+                ${MKDIR} -p ls /${CONFIGDIR}/${SUBSCRIPTION} || error "Failed to create subscription directory ${ETCSUBDIR}"
             fi
         done
     else
@@ -230,7 +252,7 @@ function subscriptions() {
     else
         LIMIT="$*"
     fi
-    ( cd $SUBSCRIPTIONDIR;
+    ( cd $CONFIGDIR;
       export LIMIT;
       ${LS} |
       ${PERL} -ne '
@@ -253,10 +275,10 @@ function services() {
         LIMIT="$*"
     fi
     (  export LIMIT;
-      cd $SUBSCRIPTIONDIR && ${LS} */[0-9]* |
+      cd ${CONFIGDIR} && ${LS} */[0-9]* |
       ${PERL} -ne '
           if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMIT}"))};
-          print if /$pat/;
+          print if /$pat/ && !/.settings$/;
           '
     ) | ${SORT} -n -t/ -k2
 }
@@ -267,43 +289,12 @@ function unsubscribe {
     subscriptions $* | while read sub
     do
         log unsubscribe $sub
-        for prog in $(cd ${DEFAULTDIR} && ls ${sub}:* 2>/dev/null)
+        for prog in $(cd ${SETTINGDIR} && ls ${sub}:* 2>/dev/null)
         do
             log removing defaults for ${prog}
-            ${RM} ${DEFAULTDIR}/${prog} || error "Failed to remove default file ${DEFAULTDIR}/${prog}"
+            ${RM} ${SETTINGDIR}/${prog} || error "Failed to remove default file ${DEFAULTDIR}/${prog}"
         done
-        ${RM} -r ${SUBSCRIPTIONDIR}/$sub || error "Failed to remove subscription directory ${SUBSCRIPTIONDIR}/$sub"
-    done
-}
-
-function _markTRUE {
-    local RUN
-    local prog
-    local TAG
-    export TAG=$1
-    shift
-    for RUN in $(services $*)
-    do
-        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
-        ${PERL} -ni -e '
-            if (/^\s*$ENV{TAG}=.*$/) { print "$ENV{TAG}=TRUE\n"; $DID=1}
-            else { print }
-            if (eof() && ! $DID)    { print "$ENV{TAG}=TRUE\n"}' ${prog}
-    done
-}
-function _markFALSE {
-    local RUN
-    local prog
-    local TAG
-    export TAG=$1
-    shift
-    for RUN in $(services $*)
-    do
-        prog=${DEFAULTDIR}/$(echo $RUN | perl -pe 's#/[0-9]+[-_]?#:#')
-        ${PERL} -ni -e '
-            if (/^\s*$ENV{TAG}=.*$/) { print "$ENV{TAG}=FALSE\n"; $DID=1}
-            else { print }
-            if (eof() && ! $DID)    { print "$ENV{TAG}=FALSE\n"}' ${prog}
+        ${RM} -r ${CONFIGDIR}/$sub || error "Failed to remove subscription directory ${CONFIGDIR}/$sub"
     done
 }
 
@@ -311,10 +302,15 @@ function install {
     local RUN
     for RUN in $(services $*)
     do
-        echo "Install ${RUN}"
-        if ${SH} ${SUBSCRIPTIONDIR}/${RUN} install
+        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
         then
-            _markInstalled ${RUN}
+            echo "Skipping ${RUN}, already installed"
+        else
+            echo "Install ${RUN}"
+            if ${SH} ${CONFIGDIR}/${RUN} install
+            then
+                _mark INSTALLED TRUE ${RUN}
+            fi
         fi
     done
 }
@@ -322,16 +318,30 @@ function upgrade {
     local RUN
     for RUN in $(services $*)
     do
-        echo "upgrade ${RUN}"
-        ${SH} ${SUBSCRIPTIONDIR}/${RUN} upgrade
+        if ! $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        then
+            install ${RUN}
+        fi
+        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        then
+            echo "upgrade ${RUN}"
+            ${SH} ${CONFIGDIR}/${RUN} upgrade
+        else
+            echo "Skipping ${RUN}, not installed"
+        fi
     done
 }
 function start {
     local RUN
     for RUN in $(services $*)
     do
-        echo "Starting ${RUN}"
-        ${SH} ${SUBSCRIPTIONDIR}/${RUN} start
+        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        then
+            echo "Starting ${RUN}"
+            ${SH} ${CONFIGDIR}/${RUN} start
+        else
+            echo "Skipping ${RUN}, not installed"
+        fi
     done
 }
 function status {
@@ -339,16 +349,22 @@ function status {
     for RUN in $(services $*)
     do
         echo "Status ${RUN}"
-        cat ${DEFAULTDIR}/$(echo ${RUN} | $PERL -pe 's#/#:#')
-        ${SH} ${SUBSCRIPTIONDIR}/${RUN} status
+        ${CAT} $(_getSettingFile ${RUN})
+        ${SH} ${CONFIGDIR}/${RUN} status
     done
 }
+
 function stop {
     local RUN
     for RUN in $(services $*)
     do
-        echo "Stopping ${RUN}"
-        ${SH} ${SUBSCRIPTIONDIR}/${RUN} stop
+        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        then
+            echo "Stopping ${RUN}"
+            ${SH} ${CONFIGDIR}/${RUN} start
+        else
+            echo "Skipping ${RUN}, not installed"
+        fi
     done
 }
 function restart {
@@ -356,14 +372,8 @@ function restart {
     for RUN in $(services $*)
     do
         echo "Restarting ${RUN}"
-        ${SH} ${SUBSCRIPTIONDIR}/${RUN} restart
+        ${SH} ${CONFIGDIR}/${RUN} restart
     done
-}
-function enable {
-    _markTRUE ENABLE $*
-}
-function disable {
-    _markFALSE ENABLE $*
 }
 
 COMMAND=$1
@@ -383,11 +393,11 @@ case "${COMMAND}" in
 	;;
 	enable)
 	    checkRoot
-	    enable $*
+	    _mark ENABLE TRUE $*
 	;;
 	disable)
 	    checkRoot
-	    disable $*
+	    _mark ENABLE FALSE $*
 	;;
 	subscriptions)
 	    subscriptions ${*:-all}
