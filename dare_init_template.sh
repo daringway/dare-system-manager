@@ -34,18 +34,7 @@
 # 5--199 reserved (5--99 LSB, 100--149 distro, 150--199 appl.)
 
 RETVAL=0
-
-PROG="XXXXXX-REPLACE-XXXXXX"
-
-# Anything between the START and END will added to the /etc/daring/default/${PROG} file
-# DEFAULT%START%
-
-# DEFAULT%END%
-
-# If there exist sysconfig/default/daring variable override files use it...
-[ -f /etc/sysconfig/${PROG} ]      && . /etc/sysconfig/${PROG}
-[ -f /etc/default/${PROG} ]        && . /etc/default/${PROG}
-[ -f /etc/daring/default/${PROG} ] && . /etc/daring/default/${PROG}
+PROG=$(basename $0)
 
 firstboot() {
     echo -n "Firstboot"

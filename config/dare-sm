@@ -2,21 +2,8 @@
 
 CONFIGDIR=/etc/daring/subscriptions
 
-PATH=/sbin:/bin:/usr/bin
 
-SH=sh
-CP=cp
-ID=id
-FIND=find
-SORT=sort
-RM=rm
-MKDIR=mkdir
-RMDIR=rmdir
-LS=ls
-CAT=cat
-GREP=grep
-# using perl removes the need for grep, sed, cat
-PERL=perl
+PATH=/sbin:/bin:/usr/bin
 
 PROG=$(basename $0)
 RETVAL=0
@@ -83,7 +70,11 @@ function log {
 }
 function _getSettingFile {
     local file
-    file=${CONFIGDIR}/${1}.settings
+    file=${CONFIGDIR}/$(basename ${1})
+    if [ ! -d ${CONFIGDIR} ]
+    then
+        mkdir -p $CONFIGDIR || error "failed to create $CONFIGDIR"
+    fi
     if [ ! -f ${file} ]
     then
         touch ${file}
@@ -91,61 +82,56 @@ function _getSettingFile {
     echo ${file}
 }
 function checkRoot {
-    if [[ $( ${ID} -u) -ne "0" ]]
+    if [[ $( id -u) -ne "0" ]]
     then
         error "Must execute command as root"
         exit 128
     fi
 }
-
 function _mark {
     # PARAMETERS VALUE TAG [services pattern]
-    local RUN
-    local prog
     local TAG
+    local SERVICE
     export TAG=$1
-    shift
-    export VALUE=$1
-    shift
+    export VALUE=$2
+    SERVICE=$(_getSettingFile ${3})
 
-    for RUN in $(services $*)
-    do
-        prog=$(_getSettingFile ${RUN})
-        if [ -s ${prog} ]
-        then
-            ${PERL} -ni -e '
-                if (! /^\s*$ENV{TAG}=.*$/) { print };
-                if (eof) { print "$ENV{TAG}=$ENV{VALUE}\n"} ' ${prog}
-        else
-            echo "${TAG}=${VALUE}" > ${prog}
-        fi
-    done
+    if [ -s ${SERVICE} ]
+    then
+        perl -ni -e '
+            if (! /^\s*$ENV{TAG}=.*$/) { print };
+            if (eof) { print "$ENV{TAG}=$ENV{VALUE}\n"} ' ${SERVICE}
+    else
+        echo "${TAG}=${VALUE}" > ${SERVICE}
+    fi
+}
+function _isMark {
+    local TAG
+    local VALUE
+    local SERVICE
+    TAG=$1
+    VALUE=$2
+    SERVICE=$(_getSettingFile $3)
+    grep "${TAG}=${VALUE}" ${SERVICE}>/dev/null
+    return $?
+}
+function _getMark {
+    local TAG
+    local SERVICE
+    TAG=$1
+    SERVICE=$(_getSettingFile $3)
+    grep ${TAG} ${SERVICE} | cut -d= -f2
 }
 
 function _installSubscriptions {
     local DIR
-    local ETCSUBDIR
-    local SUBSCRIPTION
-    local sub
-    local settings
+    local SUB
     DIR=$1
-    SUBSCRIPTION=$(echo $DIR | perl -pe 's#/#:#g; s/\.://g')
-    ETCSUBDIR=${CONFIGDIR}/${SUBSCRIPTION}
 
-    if [ ! -d ${ETCSUBDIR} ]
-    then
-        ${MKDIR} -p ${ETCSUBDIR} || error "Failed to create subscripiton directory ${ETCSUBDIR}"
-    fi
-    for sub in $(ls ${DIR}/[0-9]* 2>/dev/null)
+    for SUB in $(ls -d ${DIR}/[0-9]* 2>/dev/null)
     do
-        log "Installing subscription ${SUBDIR}/${sub}"
-        ${CP} ${sub} ${ETCSUBDIR} || error "Failed to install subscription to ${SETCSUBDIR}"
-
-        settings=$(_getSettingFile ${SUBSCRIPTION}/$(basename ${sub}))
-        if [ ! -s ${settings} ]
-        then
-            ${PERL} -ne 'if (/DEFAULT%START%/../DEFAULT%END%/) {print unless /DEFAULT%(START|END)%/}' ${sub} > ${settings}
-        fi
+        log "Installing service ${SUB}"
+        _mark SCRIPT $(abspath ${SUB}) ${SUB} || error "Failed to install subscription to ${SUB}"
     done
 }
 function _descendDir() {
@@ -154,16 +140,13 @@ function _descendDir() {
 
     dir=$1
 
-    if [ -d ${dir} ]
-    then
-        for dir2 in $(ls ${dir} 2>/dev/null)
-        do
-            if [ -d "${dir}/${dir2}" ]
-            then
-                _subscribeDir "${dir}/${dir2}"
-            fi
-        done
-    fi
+    for dir2 in $(ls -d ${dir}/* 2>/dev/null)
+    do
+        if [ -d "${dir2}" ]
+        then
+            _subscribeDir "${dir2}"
+        fi
+    done
 }
 function _subscribeDir() {
     local dir
@@ -174,7 +157,7 @@ function _subscribeDir() {
     dir=$1
     if [ -f ${dir}/subscriber ]
     then
-        list=$(cd ${dir}; ${SH} subscriber)
+        list=$(cd ${dir}; sh subscriber)
         RC=$?
         for dir2 in ${list}
         do
@@ -203,14 +186,7 @@ function _subscribeDir() {
 function subscribe {
     if [[ $1 != "--dir" ]]
     then
-        local SUBSCRIPTION
-        for SUBSCRIPTION in $*
-        do
-            if [ ! -d ${CONFIGDIR}/${SUBSCRIPTION} ]
-            then
-                ${MKDIR} -p ls /${CONFIGDIR}/${SUBSCRIPTION} || error "Failed to create subscription directory ${ETCSUBDIR}"
-            fi
-        done
+        printHelp
     else
         while [[ $# -gt 0 ]]
         do
@@ -225,91 +201,49 @@ function subscribe {
                 fi
                 if [[ $# -eq 0 || $1 == "--dir" ]]
                 then
-                    (cd ${SUBDIR} &&  _subscribeDir .)
+                    _subscribeDir ${SUBDIR}
                 fi
             else
-                if [[ "$PREFIX" == "1" ]]
-                then
-                    _subscribeDir -e $(abspath ${SUBDIR}/${1})
-                else
-                    (cd ${SUBDIR}; _subscribeDir -e ${1})
-                fi
+                 _subscribeDir -e ${SUBDIR}/${1}
                 shift
             fi
         done
     fi
 }
-
 function subscriptions() {
-    local sub
-        local LIMIT
-    if [[ $# -eq 0 ]]
-    then
-        printHelp "list of subscriptions or all"
-    elif [[ $1 == "all" ]]
-    then
-        LIMIT='.'
-    else
-        LIMIT="$*"
-    fi
-    ( cd $CONFIGDIR;
-      export LIMIT;
-      ${LS} |
-      ${PERL} -ne '
-        if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMIT}"))};
-        print if /$pat/;
-        '
-    )
+   perl -ne '/SCRIPT=(.*)\/.*$/ && print "$1\n"' ${CONFIGDIR}/* | sort -u
 }
-
 function services() {
-    local sub
-    local LIMIT
-    if [[ $# -eq 0 ]]
-    then
-        printHelp "expected search pattern or all"
-    elif [[ $1 == "all" ]]
-    then
-        LIMIT='.'
-    else
-        LIMIT="$*"
-    fi
-    (  export LIMIT;
-      cd ${CONFIGDIR} && ${LS} */[0-9]* |
-      ${PERL} -ne '
-          if(! $pat){$pat=join("|", split(/\s+/, "$ENV{LIMIT}"))};
-          print if /$pat/ && !/.settings$/;
-          '
-    ) | ${SORT} -n -t/ -k2
+    perl -ne '/SCRIPT=(.*\/(.*))$/ && print "$2 $1\n"' ${CONFIGDIR}/* | sort -n | cut -d' ' -f2
 }
 function unsubscribe {
     local sub
-    local prog
+    local file
 
-    subscriptions $* | while read sub
+    services $* | while read sub
     do
         log unsubscribe $sub
-        for prog in $(cd ${SETTINGDIR} && ls ${sub}:* 2>/dev/null)
-        do
-            log removing defaults for ${prog}
-            ${RM} ${SETTINGDIR}/${prog} || error "Failed to remove default file ${DEFAULTDIR}/${prog}"
-        done
-        ${RM} -r ${CONFIGDIR}/$sub || error "Failed to remove subscription directory ${CONFIGDIR}/$sub"
+        file=$(_getSettingFile $sub)
+        if [ -e ${file} ]
+        then
+            log removing service for ${sub}
+            rm ${file} || log "Failed to remove service ${file}"
+        fi
     done
 }
-
 function install {
     local RUN
     for RUN in $(services $*)
     do
-        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        if _isMark INSTALLED TRUE ${RUN}
         then
             echo "Skipping ${RUN}, already installed"
         else
             echo "Install ${RUN}"
-            if ${SH} ${CONFIGDIR}/${RUN} install
+            if sh ${RUN} install
             then
                 _mark INSTALLED TRUE ${RUN}
+                _mark STATE INSTALLED ${RUN}
             fi
         fi
     done
@@ -318,14 +252,14 @@ function upgrade {
     local RUN
     for RUN in $(services $*)
     do
-        if ! $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        if ! _isMark INSTALLED TRUE ${RUN}
         then
             install ${RUN}
         fi
-        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        if _isMark INSTALLED TRUE ${RUN}
         then
             echo "upgrade ${RUN}"
-            ${SH} ${CONFIGDIR}/${RUN} upgrade
+            sh ${RUN} upgrade
         else
             echo "Skipping ${RUN}, not installed"
         fi
@@ -335,10 +269,25 @@ function start {
     local RUN
     for RUN in $(services $*)
     do
-        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        if _isMark INSTALLED TRUE ${RUN}
         then
-            echo "Starting ${RUN}"
-            ${SH} ${CONFIGDIR}/${RUN} start
+            if _isMark STATE STARTED ${RUN}
+            then
+                echo "Skipping ${RUN}, already started"
+            else
+                echo "Starting ${RUN}"
+                sh ${RUN} start
+                RC=$?
+                if [[ "$RC" == "0" ]]
+                then
+                    _mark STATE STARTED ${RUN}
+                elif [[ "$RC" == "3" ]]
+                then
+                    _mark STATE INSTALLED_NO_START ${RUN}
+                else
+                    _mark STATE FAILED_START ${RUN}
+                fi
+            fi
         else
             echo "Skipping ${RUN}, not installed"
         fi
@@ -348,20 +297,42 @@ function status {
     local RUN
     for RUN in $(services $*)
     do
-        echo "Status ${RUN}"
-        ${CAT} $(_getSettingFile ${RUN})
-        ${SH} ${CONFIGDIR}/${RUN} status
+        echo "${RUN}"
+        sh ${RUN} status  | perl -pe 'print "     "'
     done
 }
-
+function state {
+    local RUN
+    for RUN in $(services $*)
+    do
+        echo "${RUN}"
+        if _isMark INSTALLED TRUE ${RUN}
+        then
+            sh ${RUN} status | perl -pe 'print "     "'
+            RC=$?
+            if [[ ${RC} == "0" ]]
+            then
+                _mark STATUS STARTED ${RUN}
+            elif [[ ${RC} == "200" ]]
+            then
+                _mark STATE INSTALLED_NO_START ${RUN}
+            else
+                _mark STATE STOPPED_${RC} ${RUN}
+            fi
+        fi
+        sort $(_getSettingFile ${RUN}) | perl -pe 'print "     "'
+    done
+}
 function stop {
     local RUN
     for RUN in $(services $*)
     do
-        if $GREP 'INSTALLED=TRUE' $(_getSettingFile ${RUN})>/dev/null
+        if _isMark INSTALLED TRUE ${RUN}
         then
-            echo "Stopping ${RUN}"
-            ${SH} ${CONFIGDIR}/${RUN} start
+            if sh ${RUN} stop
+            then
+                _mark STATE STOPPED ${RUN}
+            fi
         else
             echo "Skipping ${RUN}, not installed"
         fi
@@ -372,61 +343,76 @@ function restart {
     for RUN in $(services $*)
     do
         echo "Restarting ${RUN}"
-        ${SH} ${CONFIGDIR}/${RUN} restart
+        sh ${RUN} restart
     done
 }
 
 COMMAND=$1
 shift
+checkRoot
 case "${COMMAND}" in
     subscribe)
-        checkRoot
         subscribe $*
+        RETVAL=$?
 	;;
 	install)
-        checkRoot
         install $*
+        RETVAL=$?
 	;;
 	unsubscribe)
-	    checkRoot
         unsubscribe $*
+        RETVAL=$?
 	;;
 	enable)
-	    checkRoot
-	    _mark ENABLE TRUE $*
+	    for SERVICE in $(services $*)
+        do
+	        _mark ENABLE TRUE ${SERVICE}
+	    done
+        RETVAL=$?
 	;;
 	disable)
-	    checkRoot
-	    _mark ENABLE FALSE $*
+	    for SERVICE in $(services $*)
+        do
+	        _mark ENABLE FALSE ${SERVICE}
+	    done
+        RETVAL=$?
 	;;
 	subscriptions)
 	    subscriptions ${*:-all}
+        RETVAL=$?
 	;;
 	services)
 	    services ${*:-all}
+        RETVAL=$?
 	;;
 	install)
-	    checkRoot
         install $*
+        RETVAL=$?
     ;;
 	upgrade)
-	    checkRoot
         upgrade $*
+        RETVAL=$?
     ;;
     start)
-        checkRoot
         start $*
+        RETVAL=$?
     ;;
 	stop)
-	    checkRoot
         stop $*
+        RETVAL=$?
+
     ;;
 	restart)
-	    checkRoot
         restart $*
+        RETVAL=$?
     ;;
 	status)
-        status $*
+        status ${*:-all}
+        RETVAL=$?
+    ;;
+	state)
+        state ${*:-all}
+        RETVAL=$?
     ;;
     *)
         printHelp
@@ -434,3 +420,28 @@ case "${COMMAND}" in
     ;;
 esac
 exit $RETVAL
+
+
+# LSB RC (Return Codes) for all commands but status:
+# 0	 - success
+# 1  - generic or unspecified error
+# 2  - invalid or excess argument(s)
+# 3  - unimplemented feature (e.g. "reload")
+# 4  - user had insufficient privileges
+# 5  - program is not installed
+# 6  - program is not configured
+# 7  - program is not running
+# 8--199  - reserved (8--99 LSB, 100--149 distrib, 150--199 appl)
+#
+# Note that starting an already running service, stopping
+# or restarting a not-running service as well as the restart
+# with force-reload (in case signaling is not supported) are
+# considered a success.
+#
+# LSB RC for status command:
+# 0 - service up and running
+# 1 - service dead, but /var/run/  pid  file exists
+# 2 - service dead, but /var/lock/ lock file exists
+# 3 - service not running
+# 4 - service status unknown :-(
+# 5--199 reserved (5--99 LSB, 100--149 distro, 150--199 appl.)
