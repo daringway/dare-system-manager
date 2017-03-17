@@ -211,10 +211,28 @@ function subscribe {
     fi
 }
 function subscriptions() {
-   perl -ne '/SCRIPT=(.*)\/.*$/ && print "$1\n"' ${CONFIGDIR}/* | sort -u
+    local PATT
+    local GREP
+    PATT=$*
+    if [[ "$PATT" == "all" ]]
+    then
+        GREP=cat
+    else
+        GREP="egrep $(echo $PATT | perl -pe 's/\s+[^\$]/|/g')"
+    fi
+    perl -ne '/SCRIPT=(.*)\/.*$/ && print "$1\n"' ${CONFIGDIR}/* | sort -u | $GREP
 }
 function services() {
-    perl -ne '/SCRIPT=(.*\/(.*))$/ && print "$2 $1\n"' ${CONFIGDIR}/* | sort -n | cut -d' ' -f2
+    local PATT
+    local GREP
+    PATT=$*
+    if [[ "$PATT" == "all" ]]
+    then
+        GREP=cat
+    else
+        GREP="egrep $(echo $PATT | perl -pe 's/\s+[^\$]/|/g')"
+    fi
+    perl -ne '/SCRIPT=(.*\/(.*))$/ && print "$2 $1\n"' ${CONFIGDIR}/* | sort -n | cut -d' ' -f2 | $GREP
 }
 function unsubscribe {
     local sub
