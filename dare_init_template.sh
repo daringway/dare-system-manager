@@ -1,14 +1,70 @@
 #!/bin/sh
 #
-# dare-init template
-#
-# dare-init follows the LSB init pattern but adds two options to
-# support the dynamic nature of deploying into clouds
-#
-# firstboot
-# boot
-# update
-#
+# Steps:
+# 1) Rename to ##-service name.  Example:  25-fluent
+# 2) Move into the correct subscribers directory
+# 3) At minimum implement the install function.
+#    This should install any packages and configurations as needed
+# 4) If the service has start/stop options then implement them as well.
+# 5) If there are options then put the DEFAULTS between the tags below
+# 6) Optional options to implement include boot, reload, status
+
+install() {
+    return 3
+}
+
+start() {
+    return 3
+}
+
+stop() {
+    return 3
+}
+
+stop() {
+    return 3
+}
+
+restart() {
+    if stop
+    then
+        start
+        return $?
+    else
+        return $?
+    fi
+}
+
+case "$1" in
+    install)
+        install
+        RETVAL=$?
+	;;
+    start)
+        start
+        RETVAL=$?
+    ;;
+    stop)
+        stop
+        RETVAL=$?
+	;;
+	restart)
+        restart
+        RETVAL=$?
+    ;;
+    status)
+        status
+        RETVAL=$?
+	;;
+    *)
+        echo "$0: $1 option not implemented"
+        echo "Usage: $0 {install|start|stop|restart}"
+        RETVAL=3
+	;;
+esac
+
+exit $RETVAL
+
 # LSB RC (Return Codes) for all commands but status:
 # 0	 - success
 # 1  - generic or unspecified error
@@ -32,94 +88,3 @@
 # 3 - service not running (unused)
 # 4 - service status unknown :-(
 # 5--199 reserved (5--99 LSB, 100--149 distro, 150--199 appl.)
-
-RETVAL=0
-PROG=$(basename $0)
-
-firstboot() {
-    echo -n "Firstboot"
-    RETVAL=0
-    return $RETVAL
-}
-
-update() {
-    echo -n "Updating Package"
-    RETVAL=0
-    return $RETVAL
-}
-
-start() {
-    echo -n "Start not implemented"
-    RETVAL=3
-    return $RETVAL
-}
-
-stop() {
-    echo -n "Stop not implemented"
-    RETVAL=3
-    return $RETVAL
-}
-
-restart() {
-    echo -n "Restarting"
-    if stop
-    then
-        start
-        return $?
-    else
-        return $?
-    fi
-}
-
-reload() {
-    echo -n "Reload not implemented"
-    RETVAL=3
-    return $RETVAL
-}
-
-status() {
-    echo -n $"Checking for service $PROG:"
-    RETVAL=3
-    return $RETVAL
-}
-
-case "$1" in
-    firstboot)
-        firstboot
-        RETVAL=$?
-	;;
-    boot)
-        boot
-        RETVAL=$?
-	;;
-    update)
-        update
-        RETVAL=$?
-	;;
-    start)
-        start
-        RETVAL=$?
-    ;;
-    stop)
-        stop
-        RETVAL=$?
-	;;
-	restart|try-restart|condrestart)
-        restart
-        RETVAL=$?
-	;;
-     reload|force-reload)
-        reload
-        RETVAL=$?
-	;;
-    status)
-        status
-        RETVAL=$?
-	;;
-    *)
-        echo "Usage: $0 {firstboot|update|start|start|stop|status|try-restart|condrestart|restart|force-reload|reload}"
-        RETVAL=3
-	;;
-esac
-
-exit $RETVAL
