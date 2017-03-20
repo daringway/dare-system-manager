@@ -5,7 +5,7 @@ CONFIGDIR=/etc/dare/subscriptions
 # chkconfig: 2345 90 90
 # description: Daring Way System Manager
 
-PATH=/sbin:/bin:/usr/bin:$(dirname $0):$(dirname $0)/../bin
+PATH=/sbin:/bin:/usr/bin:$(cd $(dirname $0); pwd):$(cd $(dirname $0)/../bin; pwd)
 PROG=$(basename $0)
 
 function printHelp {

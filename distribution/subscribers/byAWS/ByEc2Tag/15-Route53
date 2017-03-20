@@ -1,5 +1,7 @@
 #!/bin/sh
 #
+# Walter Derezinski
+#
 # Steps:
 # 1) Rename starting with a numeric [0-9] and place into a subscriber directory
 # 2) Implement the install function.  Use the LSB RC codes at the bottom.
@@ -7,47 +9,19 @@
 
 RC_NOT_IMPLEMENTED=3
 
-FQDN=$(my-ec2 instance-tag ROUTE53)
-if [[ "$FQDN" != *. ]]
-then
-    FQDN=${FQDN}.
-fi
-DOMAIN=${FQDN#*.}
-#HOST=${FQDN%%.*}
-export IP4=$(my-ec2 public-ipv4)
-TFILE=/tmp/resource-record-set
-
-ZONE=$(aws route53 list-hosted-zones --query "HostedZones[?Name==\`${DOMAIN}.\`].[Id]"  --output text)
-
-aws route53 list-resource-record-sets --hosted-zone-id ${ZONE} --query "ResourceRecordSets[?Name==\`${FQDN}\`]" |
-    perl -pe 'BEGIN {print "{ \"Comment\": \"Updated by dare-sm Route53\",\n\"Changes\": " };
-              s/("ResourceRecords")/"Action": "UPSERT",\n/;
-              s/\d+\.\d.\d+.\d+/$ENV{IP4}/;
-              END {print "}\n" }; ' > $TFILE
-
-{
-    "Comment": "Update record to reflect new IP address of home router",
-    "Changes": [
-        {
-            "Action": "UPSERT",
-            "ResourceRecordSet": {
-                "Name": "${FQDN}.",
-                "Type": "A",
-                "TTL": 300,
-                "ResourceRecords": [
-                    {
-                        "Value": "${IP4}q"
-                    }
-                ]
-            }
-        }
-    ]
-}
-
 install() {
     return 0
 }
 upgrade() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+# Used by dare-sm during install/upgrade
+installStart() {
+    start
+    return $?
+}
+# Used by dare-sm during install/upgrade
+installStop() {
     return ${RC_NOT_IMPLEMENTED}
 }
 
@@ -55,10 +29,38 @@ status() {
     return 4
 }
 start() {
-    aws route53 list-resource-record-sets --hosted-zone-id ${ZONE} --change-batch file:///
+
+    my-ec2 instance-tag Route53 |perl -pe 's/:/ /'  | while read FQDN IPTYPE
+    do
+        if [[ "$FQDN" != *. ]]
+        then
+            FQDN=${FQDN}.
+        fi
+        DOMAIN=${FQDN#*.}
+        if [[ "$( echo ${IPTYPE} | tr A-Z a-z)" == private* ]]
+        then
+            IP4=$(my-ec2 local-ipv4)
+        else
+            IP4=$(my-ec2 public-ipv4)
+        fi
+        TFILE=/tmp/resource-record-set.$$
+        ZONE=$(aws route53 list-hosted-zones --query "HostedZones[?Name==\`${DOMAIN}\`].[Id]"  --output text)
+
+       aws route53 list-resource-record-sets --hosted-zone-id ${ZONE} --query "ResourceRecordSets[?Name==\`${FQDN}\`]" |
+        jq ".[0] | .ResourceRecords[0].Value = \"${IP4}\"" |
+        perl -pe 'BEGIN {print "{
+        \"Comment\": \"Updated by dare-sm Route53\",
+        \"Changes\": [
+            {
+            \"Action\": \"UPSERT\",
+            \"ResourceRecordSet\": " };
+              END {print "}]}\n" }; ' > ${TFILE}
+
+        aws route53 change-resource-record-sets --hosted-zone-id ${ZONE} --change-batch file://${TFILE}
+    done
 }
 stop() {
-
+    return ${RC_NOT_IMPLEMENTED}
 }
 restart() {
     if stop
@@ -80,11 +82,11 @@ case "$1" in
 	    RETVAL=$?
     ;;
     install-start)
-        start
+        installStart
         RETVAL=$?
 	;;
     install-stop)
-        stop
+        installStop
         RETVAL=$?
 	;;
 	start)
