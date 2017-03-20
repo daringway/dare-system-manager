@@ -1,44 +1,19 @@
 #!/bin/sh
 #
 # Steps:
-# 1) Rename starting with a numeric [0-9] and place into a subscriber directory
-# 2) Implement the install function.  Use the LSB RC codes at the bottom.
-# 3) Implement any other optional function.
+# 1) Rename to ##-service name.  Example:  25-fluent
+# 2) Move into the correct subscribers directory
+# 3) At minimum implement the install function.
+#    This should install any packages and configurations as needed
+# 4) If the service has start/stop options then implement them as well.
+# 5) If there are options then put the DEFAULTS between the tags below
+# 6) Optional options to implement include boot, reload, status
 
-RC_NOT_IMPLEMENTED=3
+PROG=$(basename $0)
 
 install() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-upgrade() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-# Used by dare-sm during install/upgrade
-installStart() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-# Used by dare-sm during install/upgrade
-installStop() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-
-status() {
-    return 4
-}
-start() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-stop() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-restart() {
-    if stop
-    then
-        start
-        return $?
-    else
-        return $?
-    fi
+    # Installation is handled by 20-aws-ssm-install
+    return 0
 }
 
 case "$1" in
@@ -46,42 +21,29 @@ case "$1" in
         install
         RETVAL=$?
 	;;
-	upgrade)
-	    upgrade
-	    RETVAL=$?
-    ;;
     install-start)
-        installStart
-        RETVAL=$?
-	;;
-    install-stop)
-        installStop
-        RETVAL=$?
-	;;
-	start)
-        start
+        systemctl start amazon-ssm-agent
         RETVAL=$?
     ;;
-    stop)
-        stop
+    install-stop)
+        systemctl stop amazon-ssm-agent
         RETVAL=$?
 	;;
-	restart)
-        restart
-        RETVAL=$?
+	restart | start | stop )
+        RETVAL=3
     ;;
     status)
-        status
+        systemctl status amazon-ssm-agent
         RETVAL=$?
 	;;
     *)
         echo "$0: $1 option not implemented"
-        echo "Usage: $0 {install|upgrade|start|stop|restart|status}"
+        echo "Usage: $0 {install|start|stop|restart}"
         RETVAL=3
 	;;
 esac
 
-exit ${RETVAL}
+exit $RETVAL
 
 # LSB RC (Return Codes) for all commands but status:
 # 0	 - success

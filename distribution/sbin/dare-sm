@@ -1,0 +1,596 @@
+#!/usr/bin/env bash
+
+CONFIGDIR=/etc/dare/subscriptions
+
+# chkconfig: 2345 90 90
+# description: Daring Way System Manager
+
+PATH=/sbin:/bin:/usr/bin:$(dirname $0):$(dirname $0)/../bin
+PROG=$(basename $0)
+
+function printHelp {
+ echo "
+  Add subscription(s):
+    ${PROG} subscribe <directory_or_subscription>+
+
+  Query and Status:
+    ${PROG} <command> [<pattern>]*
+      commands:
+        state         : List state of subscription(s) including disabled
+        status        : Call each subscription(s) status call
+        subs
+        subscriptions : List enabled subscription(s)
+
+  Management:
+    ${PROG} <command> { <pattern>+ | all }
+      commands:
+        install       : Install subscription(s) on system
+        upgrade       : Upgrade subscription(s)
+        install-start : Use during install/upgrade
+        install-stop  : Use during install/upgrade
+        unsubscribe   : Remove subscription(s)
+        enable        : Enable subscription(s)
+        disable       : Disable subscription(s)
+
+  System Init during boot/shutdown:
+    ${PROG} <command> [<pattern>]*
+       start     : Call all subscription(s) start during system boot
+       condstart : Only start if state is STOPPED
+       stop      : Call all subscription(s) called during system shutdown
+       restart   : Restart subscription(s)
+
+   " 1>&2
+   exit 1
+}
+function abspath {
+    if [[ -d "$1" ]]
+    then
+        pushd "$1" >/dev/null
+        pwd
+        popd >/dev/null
+    elif [[ -e $1 ]]
+    then
+        pushd "$(dirname "$1")" >/dev/null
+        echo "$(pwd)/$(basename "$1")"
+        popd >/dev/null
+    else
+        echo "$1" does not exist! >&2
+        return 127
+    fi
+}
+function error {
+    echo $*
+    exit 128
+}
+function log {
+    echo "  $*"
+}
+function _getSettingFile {
+    local SUB
+    SUB=$(basename $1)
+    # TODO change to perl to match correctly
+    SUB=${SUB#[0-9]*[-_]}
+
+    local file=${CONFIGDIR}/${SUB}
+    if [ ! -d ${CONFIGDIR} ]
+    then
+        mkdir -p ${CONFIGDIR} || error "failed to create $CONFIGDIR"
+    fi
+    if [ ! -f ${file} ]
+    then
+        touch ${file}
+    fi
+    echo ${file}
+}
+function _mark {
+    local TAG=$1
+    local VALUE=$2
+    local SERVICE=$(_getSettingFile $3)
+    export TAG VALUE
+    if [ -s ${SERVICE} ]
+    then
+        perl -ni -e '
+            if (! /^\s*$ENV{TAG}=.*$/) { print };
+            if (eof) { print "$ENV{TAG}=$ENV{VALUE}\n"} ' ${SERVICE}
+    else
+        echo "${TAG}=${VALUE}" > ${SERVICE}
+    fi
+}
+function _isMark {
+    local TAG=$1
+    local VALUE=$2
+    local SERVICE=$(_getSettingFile $3)
+    grep "${TAG}=${VALUE}" ${SERVICE} >/dev/null
+    return $?
+}
+function _getMark {
+    local TAG=$1
+    local SERVICE=$(_getSettingFile $2)
+    grep ${TAG} ${SERVICE} | cut -d= -f2
+}
+function _installSub {
+    local SUB=$1
+    _mark SCRIPT ${SUB} ${SUB}
+    if [[ $(_getMark STATE ${SUB}) == "" ]]
+    then
+        _mark STATE SUBSCRIBED ${SUB}
+        log "Subscribed"
+    else
+        log "Subscription updated"
+    fi
+}
+function _installSubscriptions {
+    local DIR=$1
+    local SUB
+    for SUB in $(ls -d ${DIR}/[0-9]* 2>/dev/null)
+    do
+        echo " ${SUB}"
+        _installSub ${SUB}
+    done
+}
+function _descendDir() {
+    local dir=$1
+    local dir2
+    for dir2 in $(ls -d ${dir}/* 2>/dev/null)
+    do
+        if [ -d "${dir2}" ]
+        then
+            _subscribeDir "${dir2}"
+        fi
+    done
+}
+function _subscribeDir() {
+    local dir=$1
+    local dir2
+    local list
+    local RC
+    if [ -f ${dir}/subscriber ]
+    then
+        list=$(cd ${dir} && sh subscriber)
+        RC=$?
+        for dir2 in ${list}
+        do
+            if [ ${dir2} == '.' ]
+            then
+                _installSubscriptions ${dir}
+                if [[ ${RC} == "0" ]]
+                then
+                    _descendDir ${dir}
+                fi
+            elif [ -d ${dir}/${dir2} ]
+            then
+                if [ -f ${dir}/${dir2}/subscriber ]
+                then
+                    _subscribeDir ${dir}/${dir2}
+                else
+                    _installSubscriptions ${dir}/${dir2}
+                    _descendDir ${dir}/${dir2}
+                fi
+            elif [[ ${dir2} == [0-9]* && -f ${dir}/${dir2} ]]
+            then
+                echo " ${dir}/${dir2}"
+                _installSub ${dir}/${dir2}
+            fi
+        done
+    else
+        _descendDir ${dir}
+    fi
+}
+function subscribe {
+    local SUB
+    local ITEM
+    for ITEM in $*
+    do
+        SUB=$(abspath ${ITEM})
+        echo ${SUB}
+        if [[ -e ${SUB}/subscriber ]]
+        then
+            _subscribeDir ${SUB}
+        elif [[ $(basename ${SUB}) == [0-9]* ]]
+        then
+            _installSub ${SUB}
+        else
+            error "not a valid subscriber directory or subscripiton"
+        fi
+    done
+}
+function _allSubscriptions() {
+    local PATT
+    export PATT=$*
+    if [[ "${PATT}" == "" ]]
+    then
+        PATT='.'
+    elif [[ ${PATT} == "all" ]]
+    then
+        PATT='.'
+    fi
+    perl -E ' BEGIN { $, = "\n"; $patt = $ENV{PATT}; $patt =~ s/\s+/|/g }
+           say map {$_->[1]} sort { $a->[0] <=> $b->[0] } map { /=(.*\/(.*))$/ && [$2, $1] } grep {/SCRIPT=/ && /$patt/ } <>;
+               ' ${CONFIGDIR}/*
+}
+function subscriptions() {
+    local SUB
+    for SUB in $(_allSubscriptions $*)
+    do
+        if ! $(_isMark ENABLE FALSE ${SUB})
+        then
+            echo ${SUB}
+        fi
+    done
+}
+function state {
+    local SUB
+    for SUB in $(_allSubscriptions $*)
+    do
+        echo "${SUB}"
+        sh ${SUB} status >/dev/null 2>&1
+        sort $(_getSettingFile ${SUB}) | grep -v SCRIPT | perl -pe 'print "     "'
+    done
+}
+function status {
+    local SUB
+    for SUB in $(subscriptions $*)
+    do
+        echo "${SUB}"
+        if _isMark INSTALLED TRUE ${SUB}
+        then
+            sh ${SUB} status  | perl -pe 'print "     "'
+            RC=$?
+            if [[ ${RC} == "0" ]]
+            then
+                _mark STATUS STARTED ${SUB}
+            elif [[ ${RC} == "200" ]]
+            then
+                _mark STATUS INSTALL_ONLY ${SUB}
+            else
+                _mark STATUS STOPPED_${RC} ${SUB}
+            fi
+        else
+            log "Skipping, not installed"
+        fi
+    done
+}
+function installStart {
+    local SUB
+    local RRC
+    local RC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        echo ${SUB}
+        if _isMark INSTALLED TRUE ${SUB}
+        then
+            sh ${SUB} install-start
+            RC=$?
+            if [[ "$RC" == "0" ]]
+            then
+                _mark STATE INSTALL_START ${SUB}
+                log "install-started"
+            elif [[ "$RC" != "200" ]]
+            then
+                _mark STATE INSTSALL_START_FAILED_${RC} ${SUB}
+                log "install-start Failed"
+                RRC=${RC}
+            fi
+        else
+            log "Skipping, not installed"
+        fi
+    done
+    return ${RRC}
+}
+function installStop {
+    local SUB
+    local RRC
+    local RC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        eho ${SUB}
+        if _isMark INSTALLED TRUE ${SUB}
+        then
+            sh ${SUB} install-stop
+            RC=$?
+            if [[ "$RC" == "0" ]]
+            then
+                _mark STATE INSTALL_STOP ${SUB}
+                log "install-stopped"
+            elif [[ "$RC" != "200" ]]
+            then
+                _mark STATE INSTALL_STOP_FAILED_${RC} ${SUB}
+                log "install-stop Failed"
+                RRC=${RC}
+            fi
+        else
+            log "Skipping, not installed"
+        fi
+    done
+    return ${RRC}
+}
+function install {
+    local SUB
+    local RC
+    local RRC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        echo ${SUB}
+        if _isMark INSTALLED TRUE ${SUB}
+        then
+            log "Skipping, already installed"
+        else
+            sh ${SUB} install
+            RC=$?
+            if [[ ${RC} == "0" ]]
+            then
+                _mark INSTALLED TRUE ${SUB}
+                _mark STATE INSTALLED ${SUB}
+                log "Installed"
+            else
+                _mark INSTALLED FALSE ${SUB}
+                _mark STATE INSTALL_FAILED_${RC} ${SUB}
+                log "Install Failed"
+                RRC=${RC}
+            fi
+        fi
+    done
+    return ${RRC}
+}
+function upgrade {
+    local SUB
+    local RC
+    local RRC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        echo "${SUB}"
+        if _isMark INSTALLED TRUE ${SUB}
+        then
+            sh ${SUB} upgrade
+            RC=$?
+            if [[ ${RC} == "0" ]]
+            then
+                _mark STATE UPGRADED ${SUB}
+                log "Upgraded"
+            elif [[ ${RC} != "3" ]]
+            then
+                _mark STATE UPGRADED_FAILED_${RC}
+                log "Upgrade Failed"
+                RRC=${RC}
+            fi
+        else
+            log "Skipping, not installed"
+        fi
+    done
+    return ${RRC}
+}
+function start {
+    local SUB
+    local RC
+    local RRC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        echo ${SUB}
+        if _isMark INSTALLED TRUE ${SUB}
+        then
+            sh ${SUB} start
+            RC=$?
+            if [[ "$RC" == "0" ]]
+            then
+                _mark STATE STARTED ${SUB}
+                log "Started"
+            elif [[ "$RC" != "200" ]]
+            then
+                _mark STATE START_FAILED_${RC} ${SUB}
+                log "Start Failed"
+                RRC=${RC}
+            fi
+        else
+            log "Skipping, not installed"
+        fi
+    done
+}
+function condstart {
+    local SUB
+    local RRC
+    local RC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        echo ${SUB}
+        if _isMark INSTALLED TRUE ${SUB}
+        then
+            if _isMark STATE STARTED ${SUB}
+            then
+                log "Skipping, already started"
+            else
+                sh ${SUB} start
+                RC=$?
+                if [[ "$RC" == "0" ]]
+                then
+                    _mark STATE STARTED ${SUB}
+                    log "Started"
+                elif [[ "$RC" != "200" ]]
+                then
+                    _mark STATE START_FAILED_${RC} ${SUB}
+                    log "Start Failed"
+                    RRC=${RC}
+                fi
+            fi
+        else
+            log "Skipping, not installed"
+        fi
+    done
+    return ${RRC}
+}
+function stop {
+    local SUBlocal RC
+    local RRC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        echo "${SUB}"
+        sh ${SUB} stop
+        RC=$?
+        if [[ "$RC" == "0" ]]
+        then
+            _mark STATE STOPPED ${SUB}
+            log "Stopped"
+        elif [[ "$RC" != "200" ]]
+        then
+            _mark STATE STOPPED_FAILED_${RC} ${SUB}
+            log "Failed"
+            RRC=${RC}
+        fi
+    done
+    return ${RRC}
+}
+function restart {
+    local SUB
+    local RRC
+    RRC=0
+    for SUB in $(subscriptions $*)
+    do
+        echo "Restarting ${SUB}"
+        if ! sh ${SUB} restart
+        then
+            RRC=$?
+        fi
+    done
+    return ${RRC}
+}
+function unsubscribe {
+    local SUB
+    local FILE
+    for SUB in $(_allSubscriptions $*)
+    do
+        echo ${SUB}
+        FILE=$(_getSettingFile ${SUB})
+        if [ -e ${FILE} ]
+        then
+            rm ${FILE} || error "Failed to remove subscription ${FILE}"
+        fi
+        log "Unsubscribed"
+    done
+}
+
+function requirePattern {
+    if [[ "$*" == "" ]]
+    then
+        error "must specific pattern or all option"
+    fi
+}
+if [[ $( id -u) -ne "0" ]]
+then
+    error "Must execute ${0} as root"
+    exit 128
+fi
+COMMAND=$1
+shift
+RETVAL=0
+case "${COMMAND}" in
+#Subscription Commands
+    subscribe)
+        subscribe $*
+        RETVAL=$?
+	;;
+#Query Commands
+	state)
+        state $*
+        RETVAL=$?
+    ;;
+    subscriptions | subs)
+	    subscriptions ${*:-.}
+        RETVAL=$?
+	;;
+	status)
+        status $*
+        RETVAL=$?
+    ;;
+#Actions
+	install)
+	    requirePattern $*
+        install $*
+        RETVAL=$?
+	;;
+	upgrade)
+	    requirePattern $*
+        upgrade $*
+        RETVAL=$?
+    ;;
+	install-start)
+	    requirePattern $*
+        installStart $*
+        RETVAL=$?
+    ;;
+    install-stop)
+        requirePattern $*
+        installStop $*
+        RETVAL=$?
+    ;;
+    start)
+        start $*
+        RETVAL=$?
+    ;;
+    condstart)
+        condstart $*
+        RETVAL=$?
+    ;;
+    stop)
+        stop $*
+        RETVAL=$?
+    ;;
+	restart)
+        restart $*
+        RETVAL=$?
+    ;;
+    unsubscribe)
+        unsubscribe $*
+        RETVAL=$?
+	;;
+	enable)
+	    for SUB in $(_allSubscriptions $*)
+        do
+	        _mark ENABLE TRUE ${SUB}
+	    done
+	;;
+	disable)
+	    for SUB in $(_allSubscriptions $*)
+        do
+	        _mark ENABLE FALSE ${SUB}
+	    done
+    ;;
+#Other
+    help)
+        printHelp
+    ;;
+    *)
+        echo "ERROR: ${COMMAND} not recognized"
+        printHelp
+    ;;
+esac
+exit ${RETVAL}
+
+# LSB RC (Return Codes) for all commands but status:
+# 0	 - success
+# 1  - generic or unspecified error
+# 2  - invalid or excess argument(s)
+# 3  - unimplemented feature (e.g. "reload")
+# 4  - user had insufficient privileges
+# 5  - program is not installed
+# 6  - program is not configured
+# 7  - program is not running
+# 8--199  - reserved (8--99 LSB, 100--149 distrib, 150--199 appl)
+#
+# Note that starting an already running service, stopping
+# or restarting a not-running service as well as the restart
+# with force-reload (in case signaling is not supported) are
+# considered a success.
+#
+# LSB RC for status command:
+# 0 - service up and running
+# 1 - service dead, but /var/run/  pid  file exists
+# 2 - service dead, but /var/lock/ lock file exists
+# 3 - service not running
+# 4 - service status unknown :-(
+# 5--199 reserved (5--99 LSB, 100--149 distro, 150--199 appl.)

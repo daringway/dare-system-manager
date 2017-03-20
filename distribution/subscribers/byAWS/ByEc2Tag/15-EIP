@@ -8,17 +8,9 @@
 RC_NOT_IMPLEMENTED=3
 
 install() {
-    return ${RC_NOT_IMPLEMENTED}
+    return 0
 }
 upgrade() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-# Used by dare-sm during install/upgrade
-installStart() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-# Used by dare-sm during install/upgrade
-installStop() {
     return ${RC_NOT_IMPLEMENTED}
 }
 
@@ -26,10 +18,52 @@ status() {
     return 4
 }
 start() {
-    return ${RC_NOT_IMPLEMENTED}
+    ADDR=$(my-ec2 instance-tag EIP)
+    #TODO add 172 private ranges
+    if [[ "$ADDR" == "" ]]
+    then
+        return 0
+    elif [[ "$ADDR" == 10.** || "$ADDR" == 192.168.* ]]
+    then
+        # Assume
+        aws ec2 associate-address  --instance-id $(my-ec2 instance-id)  --private-ip ${ADDR}
+        return $?
+    elif [[ "$ADDR" == [0-9]* ]]
+    then
+        aws ec2 associate-address  --instance-id $(my-ec2 instance-id)  --public-ip ${ADDR}
+        return $?
+    elif [[ "$ADDR"  == eipalloc* ]]
+    then
+        aws ec2 associate-address  --instance-id $(my-ec2 instance-id)  --allocation-id ${ADDR}
+        return $?
+    else
+        echo "address not identified $ADDR"
+        return 1
+    fi
 }
 stop() {
-    return ${RC_NOT_IMPLEMENTED}
+    ADDR=$(my-ec2 instance-tag EIP)
+    #TODO add 172 private ranges
+    if [[ "$ADDR" == "" ]]
+    then
+        return 0
+    elif [[ "$ADDR" == 10.** || "$ADDR" == 192.168.* ]]
+    then
+        # Assume
+        aws ec2 disassociate-address  --instance-id $(my-ec2 instance-id)  --private-ip ${ADDR}
+        return $?
+    elif [[ "$ADDR" == [0-9]* ]]
+    then
+        aws ec2 disassociate-address  --instance-id $(my-ec2 instance-id)  --public-ip ${ADDR}
+        return $?
+    elif [[ "$ADDR" == eipalloc* ]]
+    then
+        aws ec2 disassociate-address  --instance-id $(my-ec2 instance-id)  --allocation-id ${ADDR}
+        return $?
+    else
+        echo "address not identified $ADDR"
+        return 1
+    fi
 }
 restart() {
     if stop
@@ -51,11 +85,11 @@ case "$1" in
 	    RETVAL=$?
     ;;
     install-start)
-        installStart
+        start
         RETVAL=$?
 	;;
     install-stop)
-        installStop
+        stop
         RETVAL=$?
 	;;
 	start)

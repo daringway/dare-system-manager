@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+if [[ -f /sbin/systemctl ]]
+then
+    echo systemd
+elif [[ -f /sbin/chkconfig && -f /sbin/status && -f /sbin/start ]]
+then
+    echo init-chkconfig
+elif [[ -f /sbin/chkconfig && -f /sbin/status && -f /sbin/start ]]
+then
+    echo init
+else
+    exit 1
+fi

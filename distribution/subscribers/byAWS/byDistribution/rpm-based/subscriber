@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+if [ -x /bin/rpm ]
+then
+    echo .
+fi
