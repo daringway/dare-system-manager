@@ -9,19 +9,14 @@ function instance-id {
     curl -s --connect-timeout 3 http://169.254.169.254/latest/meta-data/instance-id
 }
 function instance-tag {
-    aws ec2 describe-tags --filters "Name=resource-id,Values=$(ec2-instance-id)" --query "Tags[?Key==\`${1}\`].Value[]" --output text
+    aws ec2 describe-tags --filters "Name=resource-id,Values=$(instance-id)" --query "Tags[?Key==\`${1}\`].Value[]" --output text
 }
 function public-ipv4 {
     curl -s --connect-timeout 3 http://169.254.169.254/latest/meta-data/public-ipv4
 }
-COMMAND=""
-if [[ "$(basename $0)" == "my-ec2" ]]
-then
-    COMMAND=$1
-    shift
-else
-    COMMAND=$(basename ${0})
-    COMMAND=${COMMAND#my-}
-fi
+
+
+COMMAND=$1
+shift
 
 ${COMMAND} $*
