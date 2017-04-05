@@ -1,9 +1,6 @@
 
 
 
-
-
-
 Install Process:
 
 1) register all subscriptions

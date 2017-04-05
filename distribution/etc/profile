@@ -1,2 +1,3 @@
 
-PATH=/opt/dare/sbin:/opt/dare/bin:$PATH
+
+PATH=/opt/daring/sbin:/opt/dare/bin:$PATH

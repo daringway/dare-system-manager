@@ -14,7 +14,7 @@ install() {
     do
         if [[ -f ${PROFILE} ]]
         then
-            DENV=/opt/dare/etc/profile
+            DENV=/opt/daring/etc/profile
             if ! grep $DENV $PROFILE >/dev/null 2>&1
             then
                 echo "" >> $PROFILE
