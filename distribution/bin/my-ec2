@@ -11,7 +11,9 @@ Use to retrieve EC2 instance metadata within your scripts.
 Usage: my-ec2 <option>
 Options:
 region               The current region
-instance-tag <tag>   The value of the EC2 Instance TAg
+instance-tag <tag>   The value of the EC2 Instance Tag
+instance-tag-names   List of my EC2 tag names
+instance-tags        List of my EC2 tags
 ami-id               The AMI ID used to launch this instance
 ami-launch-index     The index of this instance in the reservation (per AMI).
 ami-manifest-path    The manifest path of the AMI with which the instance was launched.
@@ -52,6 +54,12 @@ function region {
 function instance-tag {
     aws ec2 describe-tags --filters "Name=resource-id,Values=$(print_normal_metric meta-data/instance-id)" --query "Tags[?Key==\`${1}\`].Value[]" --output text
 }
+function instance-tag-names {
+    aws ec2 describe-tags --filters "Name=resource-id,Values=$(my-ec2 instance-id)" --query "Tags[].[Key]" --output text
+}
+function instance-tags {
+    aws ec2 describe-tags --filters "Name=resource-id,Values=$(my-ec2 instance-id)" --query "Tags[].[Key,Value]" --output text
+}
 
 COMMAND=$1
 shift
@@ -61,6 +69,10 @@ case ${COMMAND} in
 																 ;;
 	instance-tag )          instance-tag $*
 																 ;;
+    instance-tag-names )    instance-tag-names
+                                                                 ;;
+    instance-tags )         instance-tags
+                                                                 ;;
 	ami-id )                print_normal_metric meta-data/ami-id
 																 ;;
 	ami-launch-index )      print_normal_metric meta-data/ami-launch-index

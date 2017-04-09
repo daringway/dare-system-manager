@@ -1,14 +1,8 @@
 #!/bin/sh
 #
-# Steps:
-# 1) Rename starting with a numeric [0-9] and place into a subscriber directory
-# 2) Implement the install function.  Use the LSB RC codes at the bottom.
-# 3) Implement any other optional function.
+. /etc/default/dare-sm
 
-RC_NOT_IMPLEMENTED=3
-RC_INSTALL_ONLY=200
-
-PROFILES="~/.bash_profile ~ec2-user/.bash_profile"
+PROFILES="~/.bash_profile ~ec2-user/.bash_profile ~centos/.bash_profile"
 install() {
     for PROFILE in $(eval echo $PROFILES)
     do
@@ -24,12 +18,37 @@ install() {
             fi
         fi
     done
+    return 0
 }
 upgrade() {
-    install
-    return $?
+    return ${RC_NOT_IMPLEMENTED}
 }
-
+# Used by dare-sm during install/upgrade
+installStart() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+# Used by dare-sm during install/upgrade
+installStop() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+status() {
+    return 4
+}
+start() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+stop() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+restart() {
+    if stop
+    then
+        start
+        return $?
+    else
+        return $?
+    fi
+}
 case "$1" in
     install)
         install
@@ -39,14 +58,29 @@ case "$1" in
 	    upgrade
 	    RETVAL=$?
     ;;
-    install-start | install-stop )
-        RETVAL=${RC_INSTALL_ONLY}
+    install-start)
+        installStart
+        RETVAL=$?
 	;;
-	status)
-	    RETVAL=${RC_INSTALL_ONLY}
+    install-stop)
+        installStop
+        RETVAL=$?
 	;;
-    start | stop | restart )
-        RETVAL=${RC_INSTALL_ONLY}
+	start)
+        start
+        RETVAL=$?
+    ;;
+    stop)
+        stop
+        RETVAL=$?
+	;;
+	restart)
+        restart
+        RETVAL=$?
+    ;;
+    status)
+        status
+        RETVAL=$?
 	;;
     *)
         echo "$0: $1 option not implemented"

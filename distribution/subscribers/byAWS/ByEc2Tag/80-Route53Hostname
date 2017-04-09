@@ -1,14 +1,70 @@
 #!/bin/sh
+#
+# This works in conjunction with route53-init and similar to Route53FQDN
+#
+# Sets the DNS record <Instance Tag Name>.<Domain> to the public or private IPv4 address.
+#
+# Values comma separated list of DOMAIN:IpType
+#
+# Examples Tags:
+#   Name=bugs
+#   Route53Hostname=acme.com:public       -- Uses the public-ipv4
+#   Route53Hostname=acme.com:public-ipv4  -- Uses the public-ipv4
+#   Route53Hostname=acme.com:local-ipv4   -- Uses the local-ipv4
+#   Route53Hostname=acme.com:private      -- Uses the local-ipv4
+#
+# Sets the Name bugs in the Zone acme.com to the public or local ipv4 address.
 
 . /etc/default/dare-sm
 
+
+# "Action": "CREATE"|"DELETE"|"UPSERT",
+JSON='
+{
+  "Comment": "Updated by dare-sm 80-Route53ARecord",
+  "Changes": [
+    {
+      "Action": "X-ACTION-X",
+      "ResourceRecordSet": {
+        "Name": "X-FQDN-X",
+        "Type": "A",
+        "TTL": 60,
+        "ResourceRecords": [
+          {
+            "Value": "X-IP-X"
+          }
+        ]
+      }
+    }
+  ]
+}
+'
+
 install() {
-    if [[ ! -f /etc/init.d/dare-sm ]]
-    then
-        ln -s $(type -p dare-sm) /etc/init.d
-    fi
-    chkconfig --add dare-sm
-    return $?
+    ZONE=$(aws route53 list-hosted-zones --query "HostedZones[?Name==\`${DOMAIN}\`].[Id]"  --output text)
+    my-ec2 instance-tag Route53Hostname |perl -pe 's/:/ /g, s/,/\n/g'  | while read DOMAIN IPTYPE
+    do
+        if [[ "$DOMAIN" != *. ]]
+        then
+            DOMAIN=${DOMAIN}.
+        fi
+        if [[ "$( echo ${IPTYPE} | tr A-Z a-z)" == public* ]]
+        then
+            export IP4=$(my-ec2 public-ipv4)
+        else
+            export IP4=$(my-ec2 local-ipv4)
+        fi
+
+        export FQDN=$(hostname).${DOMAIN}
+
+        JSON_FILE=${DARE_ETC}/route53-start_${FQDN}json
+        echo $JSON | perl -pe 's/X-ACTION-X/CREATE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{IP4}/;' > $JSON_FILE
+
+        JSON_FILE=${DARE_ETC}/route53-stop_${FQDN}json
+        echo $JSON | perl -pe 's/X-ACTION-X/DELETE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{IP4}/;' > $JSON_FILE
+    done
+
+    return 0
 }
 upgrade() {
     return ${RC_NOT_IMPLEMENTED}
@@ -21,6 +77,7 @@ installStart() {
 installStop() {
     return ${RC_NOT_IMPLEMENTED}
 }
+
 status() {
     return 4
 }
@@ -39,6 +96,7 @@ restart() {
         return $?
     fi
 }
+
 case "$1" in
     install)
         install

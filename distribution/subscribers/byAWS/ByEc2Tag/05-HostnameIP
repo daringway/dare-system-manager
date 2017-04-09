@@ -1,49 +1,55 @@
 #!/bin/sh
 
+# change the hostname to ec2 Name tag plus the last octet of the local or public IPv4 address
+
 . /etc/default/dare-sm
 
 install() {
-    sudo -i -u ec2-user npm install daring-http-redirector
+
+    if [[ "$( $(my-ec2 instance-tag HostnameIp) | tr A-Z a-z)" == public* ]]
+    then
+        IP4=$(my-ec2 public-ipv4 | cut -d. -f4)
+    else
+        IP4=$(my-ec2 local-ipv4 | cut -d. -f4)
+    fi
+
+    export NEWHOSTNAME="$(my-ec2 instance-tag Name)-$(printf "%03d" $IP4)"
+
+    hostname $NEWHOSTNAME
+    echo $NEWHOSTNAME > /etc/hostname
+    aws ec2 create-tags --resources $(my-ec2 instance-id) --tags Key=Name,Value=${NEWHOSTNAME}
+
+    perl -i -pe 's/HOSTNAME=.*$/HOSTNAME=$ENV{NEWHOSTNAME}/' /etc/sysconfig/network
     return $?
 }
 upgrade() {
-    sudo -i -u ec2-user npm update
-    return $?
+    return ${RC_NOT_IMPLEMENTED}
 }
-
-start() {
-    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 5080
-    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 443 -j REDIRECT --to-port 5443
-
-    sudo -i -u ec2-user ./node_modules/forever/bin/forever start node_modules/daring-http-redirector/redirector.js
-    return $?
+# Used by dare-sm during install/upgrade
+installStart() {
+    return ${RC_NOT_IMPLEMENTED}
 }
-stop() {
-    sudo -i -u ec2-user ./node_modules/forever/bin/forever stopall
-    return $?
+# Used by dare-sm during install/upgrade
+installStop() {
+    return ${RC_NOT_IMPLEMENTED}
 }
 status() {
-    sudo -i -u ec2-user ./node_modules/forever/bin/forever list
-    return $?
+    return 4
+}
+start() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+stop() {
+    return ${RC_NOT_IMPLEMENTED}
 }
 restart() {
     if stop
     then
-        sleep 3
         start
         return $?
     else
         return $?
     fi
-}
-
-installStart() {
-    start
-    return $?
-}
-installStop() {
-    stop
-    return $?
 }
 
 case "$1" in
@@ -54,13 +60,13 @@ case "$1" in
 	upgrade)
 	    upgrade
 	    RETVAL=$?
-	;;
+    ;;
     install-start)
         installStart
         RETVAL=$?
-    ;;
+	;;
     install-stop)
-        installStart
+        installStop
         RETVAL=$?
 	;;
 	start)

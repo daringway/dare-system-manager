@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 
-CONFIGDIR=/etc/dare/subscriptions
-
 # chkconfig: 2345 90 90
 # description: Daring Way System Manager
+
+. /etc/default/dare-sm
 
 PATH=/sbin:/bin:/usr/bin:$(cd $(dirname $0); pwd):$(cd $(dirname $0)/../bin; pwd)
 PROG=$(basename $0)
 
+LOGPREFIX=" -t dare-sm[$$] "
+
 function printHelp {
  echo "
+  Add set of subscriptions to system.
+    ${PROG} add <URL>
+
   Add subscription(s):
     ${PROG} subscribe <directory_or_subscription>+
 
@@ -59,22 +64,36 @@ function abspath {
     fi
 }
 function error {
-    echo $*
-    exit 128
+    echo "  ERROR $*"
+    logger $LOGPREFIX ERROR $*
+    exit 1
 }
-function log {
+function success {
+    echo "  success $*"
+    logger $LOGPREFIX INFO success $*
+}
+function failed {
+    echo "  failed $*"
+    logger $LOGPREFIX WARN failed $*
+}
+function info {
+    echo "  $*"
+    logger $LOGPREFIX INFO $*
+}
+function display {
     echo "  $*"
 }
+
 function _getSettingFile {
     local SUB
     SUB=$(basename $1)
     # TODO change to perl to match correctly
     SUB=${SUB#[0-9]*[-_]}
 
-    local file=${CONFIGDIR}/${SUB}
-    if [ ! -d ${CONFIGDIR} ]
+    local file=${DARE_SUBSCRIPTION_DIR}/${SUB}
+    if [ ! -d ${DARE_SUBSCRIPTION_DIR} ]
     then
-        mkdir -p ${CONFIGDIR} || error "failed to create $CONFIGDIR"
+        mkdir -p ${DARE_SUBSCRIPTION_DIR} || error "failed to create $DARE_SUBSCRIPTION_DIR"
     fi
     if [ ! -f ${file} ]
     then
@@ -114,9 +133,9 @@ function _installSub {
     if [[ $(_getMark STATE ${SUB}) == "" ]]
     then
         _mark STATE SUBSCRIBED ${SUB}
-        log "Subscribed"
+        info subscribed ${SUB}
     else
-        log "Subscription updated"
+        display "Subscription updated"
     fi
 }
 function _installSubscriptions {
@@ -176,13 +195,31 @@ function _subscribeDir() {
         _descendDir ${dir}
     fi
 }
+function add {
+    local URL
+    for URL in $(echo $* | perl -pe 's/:/ /g')
+    do
+        if [[ ${URL} == s3* ]]
+        then
+            if aws s3 sync ${URL} ${DARE_SUBSCRIBER_DIR}
+            then
+                success add ${URL}
+            else
+                failed add ${URL} RC=${?}
+            fi
+        else
+            failed add ${URL} type currently not supported
+        fi
+    done
+    return 0
+}
+
 function subscribe {
     local SUB
     local ITEM
     for ITEM in $*
     do
         SUB=$(abspath ${ITEM})
-        echo ${SUB}
         if [[ -e ${SUB}/subscriber ]]
         then
             _subscribeDir ${SUB}
@@ -190,7 +227,7 @@ function subscribe {
         then
             _installSub ${SUB}
         else
-            error "not a valid subscriber directory or subscripiton"
+            failed subscribe dir ${SUB}
         fi
     done
 }
@@ -206,7 +243,7 @@ function _allSubscriptions() {
     fi
     perl -E ' BEGIN { $, = "\n"; $patt = $ENV{PATT}; $patt =~ s/\s+/|/g }
            say map {$_->[1]} sort { $a->[0] <=> $b->[0] } map { /=(.*\/(.*))$/ && [$2, $1] } grep {/SCRIPT=/ && /$patt/ } <>;
-               ' ${CONFIGDIR}/*
+               ' ${DARE_SUBSCRIPTION_DIR}/*
 }
 function subscriptions() {
     local SUB
@@ -232,7 +269,7 @@ function status {
     for SUB in $(subscriptions $*)
     do
         echo "${SUB}"
-        if _isMark INSTALLED TRUE ${SUB}
+        if _isMark INSTALLED TRUE ${SUB} || _isMark INSTALLED NOT_IMPLEMENTED ${SUB}
         then
             sh ${SUB} status  | perl -pe 'print "     "'
             RC=$?
@@ -246,7 +283,7 @@ function status {
                 _mark STATUS STOPPED_${RC} ${SUB}
             fi
         else
-            log "Skipping, not installed"
+            display "Skipping, not installed"
         fi
     done
 }
@@ -257,25 +294,31 @@ function installStart {
     RRC=0
     for SUB in $(subscriptions $*)
     do
-        echo ${SUB}
-        if _isMark INSTALLED TRUE ${SUB}
+#        echo ${SUB}
+        if _isMark INSTALLED TRUE ${SUB}  || _isMark INSTALLED NOT_IMPLEMENTED ${SUB}
         then
             sh ${SUB} install-start
             RC=$?
             if [[ "$RC" == "0" ]]
             then
                 _mark STATE INSTALL_START ${SUB}
-                log "install-started"
-            elif [[ "$RC" != "200" ]]
+                success install-start ${SUB}
+            elif [[ "$RC" == "3" ]]
             then
-                _mark STATE INSTSALL_START_FAILED_${RC} ${SUB}
-                log "install-start Failed"
+                _mark _mark STATE INSTALL_START_NOT_IMPLEMENTED ${SUB}
+            else
+                _mark STATE INSTALL_START_FAILED_${RC} ${SUB}
+                failed install-start RC=${RC} ${SUB}
                 RRC=${RC}
             fi
         else
-            log "Skipping, not installed"
+            display "Skipping, not installed"
         fi
     done
+    if [[ "$*" == "" || "$*" == "all" ]]
+    then
+        touch /var/lock/subsys/dare-sm
+    fi
     return ${RRC}
 }
 function installStop {
@@ -286,24 +329,28 @@ function installStop {
     for SUB in $(subscriptions $*)
     do
         eho ${SUB}
-        if _isMark INSTALLED TRUE ${SUB}
+        if _isMark INSTALLED TRUE ${SUB} || _isMark INSTALLED NOT_IMPLEMENTED ${SUB}
         then
             sh ${SUB} install-stop
             RC=$?
             if [[ "$RC" == "0" ]]
             then
                 _mark STATE INSTALL_STOP ${SUB}
-                log "install-stopped"
-            elif [[ "$RC" != "200" ]]
+                success install-stop ${SUB}
+            elif [[ "$RC" != "3" ]]
             then
                 _mark STATE INSTALL_STOP_FAILED_${RC} ${SUB}
-                log "install-stop Failed"
+                failed install-stop RC=${RC} ${SUB}
                 RRC=${RC}
             fi
         else
-            log "Skipping, not installed"
+            display "Skipping, not installed"
         fi
     done
+    if [[ "$*" == "" || "$*" == "all" ]]
+    then
+        rm /var/lock/subsys/dare-sm
+    fi
     return ${RRC}
 }
 function install {
@@ -314,9 +361,9 @@ function install {
     for SUB in $(subscriptions $*)
     do
         echo ${SUB}
-        if _isMark INSTALLED TRUE ${SUB}
+        if _isMark INSTALLED TRUE ${SUB} || _isMark INSTALLED NOT_IMPLEMENTED ${SUB}
         then
-            log "Skipping, already installed"
+            display "Skipping, already installed"
         else
             sh ${SUB} install
             RC=$?
@@ -324,11 +371,15 @@ function install {
             then
                 _mark INSTALLED TRUE ${SUB}
                 _mark STATE INSTALLED ${SUB}
-                log "Installed"
+                success install ${SUB}
+            elif [[ ${RC} == "3" ]]
+            then
+                _mark INSTALLED NOT_IMPLEMENTED ${SUB}
+                _mark STATE INSTALL_NOT_IMPLEMENTED ${SUB}
             else
                 _mark INSTALLED FALSE ${SUB}
                 _mark STATE INSTALL_FAILED_${RC} ${SUB}
-                log "Install Failed"
+                failed install RC=${RC} ${SUB}
                 RRC=${RC}
             fi
         fi
@@ -343,22 +394,22 @@ function upgrade {
     for SUB in $(subscriptions $*)
     do
         echo "${SUB}"
-        if _isMark INSTALLED TRUE ${SUB}
+        if _isMark INSTALLED TRUE ${SUB} || _isMark INSTALLED NOT_IMPLEMENTED ${SUB}
         then
             sh ${SUB} upgrade
             RC=$?
             if [[ ${RC} == "0" ]]
             then
                 _mark STATE UPGRADED ${SUB}
-                log "Upgraded"
+               success upgrade ${SUB}
             elif [[ ${RC} != "3" ]]
             then
-                _mark STATE UPGRADED_FAILED_${RC}
-                log "Upgrade Failed"
+                _mark STATE UPGRADE_FAILED_${RC} ${SUB}
+                failed upgrade RC=${RC} ${SUB}
                 RRC=${RC}
             fi
         else
-            log "Skipping, not installed"
+            display "Skipping, not installed"
         fi
     done
     return ${RRC}
@@ -371,58 +422,31 @@ function start {
     for SUB in $(subscriptions $*)
     do
         echo ${SUB}
-        if _isMark INSTALLED TRUE ${SUB}
+        if _isMark INSTALLED TRUE ${SUB} || _isMark INSTALLED NOT_IMPLEMENTED ${SUB}
         then
             sh ${SUB} start
             RC=$?
             if [[ "$RC" == "0" ]]
             then
                 _mark STATE STARTED ${SUB}
-                log "Started"
-            elif [[ "$RC" != "200" ]]
+                success start ${SUB}
+            elif [[ ${RC} != "3" ]]
             then
                 _mark STATE START_FAILED_${RC} ${SUB}
-                log "Start Failed"
+                failed start RC=${RC} ${SUB}
                 RRC=${RC}
             fi
         else
-            log "Skipping, not installed"
+            display "Skipping, not installed"
         fi
     done
+    if [[ "$*" == "" || "$*" == "all" ]]
+    then
+        touch /var/lock/subsys/dare-sm
+    fi
+    return $RRC
 }
-function condstart {
-    local SUB
-    local RRC
-    local RC
-    RRC=0
-    for SUB in $(subscriptions $*)
-    do
-        echo ${SUB}
-        if _isMark INSTALLED TRUE ${SUB}
-        then
-            if _isMark STATE STARTED ${SUB}
-            then
-                log "Skipping, already started"
-            else
-                sh ${SUB} start
-                RC=$?
-                if [[ "$RC" == "0" ]]
-                then
-                    _mark STATE STARTED ${SUB}
-                    log "Started"
-                elif [[ "$RC" != "200" ]]
-                then
-                    _mark STATE START_FAILED_${RC} ${SUB}
-                    log "Start Failed"
-                    RRC=${RC}
-                fi
-            fi
-        else
-            log "Skipping, not installed"
-        fi
-    done
-    return ${RRC}
-}
+
 function stop {
     local SUBlocal RC
     local RRC
@@ -435,14 +459,18 @@ function stop {
         if [[ "$RC" == "0" ]]
         then
             _mark STATE STOPPED ${SUB}
-            log "Stopped"
-        elif [[ "$RC" != "200" ]]
+            success stop ${SUB}
+        elif [[ ${RC} != "3" ]]
         then
             _mark STATE STOPPED_FAILED_${RC} ${SUB}
-            log "Failed"
+            failed stop RC=${RC} ${SUB}
             RRC=${RC}
         fi
     done
+    if [[ "$*" == "" || "$*" == "all" ]]
+    then
+        rm /var/lock/subsys/dare-sm
+    fi
     return ${RRC}
 }
 function restart {
@@ -464,13 +492,16 @@ function unsubscribe {
     local FILE
     for SUB in $(_allSubscriptions $*)
     do
-        echo ${SUB}
         FILE=$(_getSettingFile ${SUB})
         if [ -e ${FILE} ]
         then
-            rm ${FILE} || error "Failed to remove subscription ${FILE}"
+            if rm ${FILE}
+            then
+                success unsubscribe ${SUB}
+            else
+                failed unsubscribe RC=${RC} ${SUB} remove ${FILE}
+            fi
         fi
-        log "Unsubscribed"
     done
 }
 
@@ -482,7 +513,7 @@ function requirePattern {
 }
 if [[ $( id -u) -ne "0" ]]
 then
-    error "Must execute ${0} as root"
+    echo "ERROR: Must execute ${0} as root" 1>&2
     exit 128
 fi
 COMMAND=$1
@@ -490,6 +521,10 @@ shift
 RETVAL=0
 case "${COMMAND}" in
 #Subscription Commands
+    add)
+        add $*
+        RETVAL=$?
+    ;;
     subscribe)
         subscribe $*
         RETVAL=$?

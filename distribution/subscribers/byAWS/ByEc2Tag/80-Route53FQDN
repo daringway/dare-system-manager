@@ -1,63 +1,86 @@
 #!/bin/sh
-#
-# Walter Derezinski
-#
-# Steps:
-# 1) Rename starting with a numeric [0-9] and place into a subscriber directory
-# 2) Implement the install function.  Use the LSB RC codes at the bottom.
-# 3) Implement any other optional function.
 
-RC_NOT_IMPLEMENTED=3
+# This works in conjunction with route53-init
+#
+# Similar to Route53Hostname but the FQDN name is specified.
+#
+# Tag: Route53FQDN
+# Values: comma separated of KEY:VALUE pairs
+# Examples:
+#   FQDN:IP-type
+#   bugs.acme.com:public       -- Uses the public-ipv4
+#   bugs.acme.com:public-ipv4  -- Uses the public-ipv4
+#   bugs.acme.com:local-ipv4   -- Uses the local-ipv4
+#   bugs.acme.com:local        -- Uses the local-ipv4
+#
+# Sets the hostname bugs in the Zone acme.com to the public or local ipv4 address.
+
+. /etc/default/dare-sm
+
+# "Action": "CREATE"|"DELETE"|"UPSERT",
+JSON='
+{
+  "Comment": "Updated by dare-sm 80-Route53ARecord",
+  "Changes": [
+    {
+      "Action": "X-ACTION-X",
+      "ResourceRecordSet": {
+        "Name": "X-FQDN-X",
+        "Type": "A",
+        "TTL": 60,
+        "ResourceRecords": [
+          {
+            "Value": "X-IP-X"
+          }
+        ]
+      }
+    }
+  ]
+}
+'
 
 install() {
-    return 0
-}
-upgrade() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-# Used by dare-sm during install/upgrade
-installStart() {
-    start
-    return $?
-}
-# Used by dare-sm during install/upgrade
-installStop() {
-    return ${RC_NOT_IMPLEMENTED}
-}
-
-status() {
-    return 4
-}
-start() {
-
-    my-ec2 instance-tag Route53 |perl -pe 's/:/ /'  | while read FQDN IPTYPE
+    ZONE=$(aws route53 list-hosted-zones --query "HostedZones[?Name==\`${DOMAIN}\`].[Id]"  --output text)
+    my-ec2 instance-tag Route53Hostname |perl -pe 's/:/ /g, s/,/\n/g'  | while read FQDN IPTYPE
     do
         if [[ "$FQDN" != *. ]]
         then
             FQDN=${FQDN}.
         fi
-        DOMAIN=${FQDN#*.}
-        if [[ "$( echo ${IPTYPE} | tr A-Z a-z)" == private* ]]
+        if [[ "$( echo ${IPTYPE} | tr A-Z a-z)" == public-ipv4 ]]
         then
-            IP4=$(my-ec2 local-ipv4)
+            export IP4=$(my-ec2 public-ipv4)
         else
-            IP4=$(my-ec2 public-ipv4)
+            export IP4=$(my-ec2 local-ipv4)
         fi
-        TFILE=/tmp/resource-record-set.$$
-        ZONE=$(aws route53 list-hosted-zones --query "HostedZones[?Name==\`${DOMAIN}\`].[Id]"  --output text)
 
-       aws route53 list-resource-record-sets --hosted-zone-id ${ZONE} --query "ResourceRecordSets[?Name==\`${FQDN}\`]" |
-        jq ".[0] | .ResourceRecords[0].Value = \"${IP4}\"" |
-        perl -pe 'BEGIN {print "{
-        \"Comment\": \"Updated by dare-sm Route53\",
-        \"Changes\": [
-            {
-            \"Action\": \"UPSERT\",
-            \"ResourceRecordSet\": " };
-              END {print "}]}\n" }; ' > ${TFILE}
 
-        aws route53 change-resource-record-sets --hosted-zone-id ${ZONE} --change-batch file://${TFILE}
+        JSON_FILE=${DARE_ETC}/route53-start_${FQDN}json
+        echo $JSON | perl -pe 's/X-ACTION-X/CREATE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{IP4}/;' > $JSON_FILE
+
+        JSON_FILE=${DARE_ETC}/route53-stop_${FQDN}json
+        echo $JSON | perl -pe 's/X-ACTION-X/DELETE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{IP4}/;' > $JSON_FILE
     done
+
+    return 0
+}
+
+upgrade() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+# Used by dare-sm during install/upgrade
+installStart() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+# Used by dare-sm during install/upgrade
+installStop() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+status() {
+    return 4
+}
+start() {
+    return ${RC_NOT_IMPLEMENTED}
 }
 stop() {
     return ${RC_NOT_IMPLEMENTED}
@@ -71,7 +94,6 @@ restart() {
         return $?
     fi
 }
-
 case "$1" in
     install)
         install

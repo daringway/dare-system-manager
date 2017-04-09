@@ -1,27 +1,45 @@
 #!/bin/sh
-#
-# Steps:
-# 1) Rename to ##-service name.  Example:  25-fluent
-# 2) Move into the correct subscribers directory
-# 3) At minimum implement the install function.
-#    This should install any packages and configurations as needed
-# 4) If the service has start/stop options then implement them as well.
-# 5) If there are options then put the DEFAULTS between the tags below
-# 6) Optional options to implement include boot, reload, status
 
-PROG=$(basename $0)
+. /etc/default/dare-sm
 
 install() {
-    echo "Installing $PROG"
     RETVAL=0
-    REGION=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document/ | perl -ne '/region"\s+:\s+"([^"]+)/ && print $1')
-    rpm --install https://amazon-ssm-${REGION}.s3.amazonaws.com/latest/linux_amd64/amazon-ssm-agent.rpm
-    return $?
+    if ! rpm -q amazon-ssm-agent
+    then
+        rpm --install https://amazon-ssm-$(my-ec2 region).s3.amazonaws.com/latest/linux_amd64/amazon-ssm-agent.rpm
+        RETVAL=$?
+    fi
+    return $RETVAL
 }
 upgrade() {
     return ${RC_NOT_IMPLEMENTED}
 }
-
+# Used by dare-sm during install/upgrade
+installStart() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+# Used by dare-sm during install/upgrade
+installStop() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+status() {
+    return 4
+}
+start() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+stop() {
+    return ${RC_NOT_IMPLEMENTED}
+}
+restart() {
+    if stop
+    then
+        start
+        return $?
+    else
+        return $?
+    fi
+}
 case "$1" in
     install)
         install
@@ -31,14 +49,29 @@ case "$1" in
 	    upgrade
 	    RETVAL=$?
     ;;
-    install-start | install-stop )
-        RETVAL=${RC_INSTALL_ONLY}
+    install-start)
+        installStart
+        RETVAL=$?
 	;;
-	status)
-	    RETVAL=${RC_INSTALL_ONLY}
+    install-stop)
+        installStop
+        RETVAL=$?
 	;;
-    start | stop | restart )
-        RETVAL=${RC_INSTALL_ONLY}
+	start)
+        start
+        RETVAL=$?
+    ;;
+    stop)
+        stop
+        RETVAL=$?
+	;;
+	restart)
+        restart
+        RETVAL=$?
+    ;;
+    status)
+        status
+        RETVAL=$?
 	;;
     *)
         echo "$0: $1 option not implemented"

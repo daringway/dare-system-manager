@@ -1,14 +1,9 @@
 #!/bin/sh
-#
-# Steps:
-# 1) Rename starting with a numeric [0-9] and place into a subscriber directory
-# 2) Implement the install function.  Use the LSB RC codes at the bottom.
-# 3) Implement any other optional function.
 
-RC_NOT_IMPLEMENTED=3
+. /etc/default/dare-sm
 
 install() {
-    return 0
+    return ${RC_NOT_IMPLEMENTED}
 }
 upgrade() {
     return ${RC_NOT_IMPLEMENTED}

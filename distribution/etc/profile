@@ -1,3 +1,4 @@
 
+. /etc/default/dare-sm
 
-PATH=/opt/daring/sbin:/opt/dare/bin:$PATH
+PATH=${DARE_DIR}/sbin:${DARE_DIR}/bin:$PATH
