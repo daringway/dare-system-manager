@@ -15,14 +15,17 @@ aws ec2 describe-tags --filters "Name=resource-id,Values=$(my-ec2 instance-id)" 
         done
     done
 
-set -o posix ; set | perl -pe 's/=/ /' |
-    while read TAG VALUES
-    do
-        ls -d [0-9]*${TAG} ${TAG} 2>/dev/null
-        for VALUE in $( echo $VALUES |  perl -pe 's/\s+|,/ /g' )
-        do
-            ls -d [0-9]*${TAG}-${VALUE}  ${TAG}-${VALUE} 2>/dev/null
-        done
-    done
+# TODO support ENV variables
+# 1) save ENV variables to /etc/default/dare-sm on first pass for future runs
+# 2) add function to used by all subscriptions to get EC2 Tag or ENV Variable
+#set -o posix ; set | perl -pe 's/=/ /' |
+#    while read TAG VALUES
+#    do
+#        ls -d [0-9]*${TAG} ${TAG} 2>/dev/null
+#        for VALUE in $( echo $VALUES |  perl -pe 's/\s+|,/ /g' )
+#        do
+#            ls -d [0-9]*${TAG}-${VALUE}  ${TAG}-${VALUE} 2>/dev/null
+#        done
+#    done
 
 exit 0
