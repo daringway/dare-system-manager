@@ -37,28 +37,15 @@ start() {
     fi
 }
 stop() {
-    ADDR=$(my-ec2 instance-tag EIP)
-    #TODO add 172 private ranges
-    if [[ "$ADDR" == "" ]]
-    then
-        return 0
-    elif [[ "$ADDR" == 10.** || "$ADDR" == 192.168.* ]]
-    then
-        # Assume
-        aws ec2 disassociate-address  --instance-id $(my-ec2 instance-id)  --private-ip ${ADDR}
-        return $?
-    elif [[ "$ADDR" == [0-9]* ]]
-    then
-        aws ec2 disassociate-address  --instance-id $(my-ec2 instance-id)  --public-ip ${ADDR}
-        return $?
-    elif [[ "$ADDR" == eipalloc* ]]
-    then
-        aws ec2 disassociate-address  --instance-id $(my-ec2 instance-id)  --allocation-id ${ADDR}
-        return $?
-    else
-        echo "address not identified $ADDR"
-        return 1
-    fi
+    RRC=0
+    for ASSID in $(aws ec2 describe-addresses --filters Name=instance-id,Values=$(my-ec2 instance-id)  | grep AssociationId | cut -d\" -f4)
+    do
+        if ! aws ec2 disassociate-address --association-id ${ASSID}
+        then
+            RRC=$?
+        fi
+    done
+    return $RRC
 }
 restart() {
     if stop

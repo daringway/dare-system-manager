@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. /etc/default/dare-sm
+
 install() {
     return ${RC_NOT_IMPLEMENTED}
 }

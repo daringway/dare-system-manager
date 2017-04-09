@@ -5,7 +5,8 @@
 # 2) Implement the install function.  Use the LSB RC codes at the bottom.
 # 3) Implement any other optional function.
 
-RC_NOT_IMPLEMENTED=3
+. /etc/default/dare-sm
+
 
 install() {
     return ${RC_NOT_IMPLEMENTED}

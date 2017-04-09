@@ -294,7 +294,6 @@ function installStart {
     RRC=0
     for SUB in $(subscriptions $*)
     do
-#        echo ${SUB}
         if _isMark INSTALLED TRUE ${SUB}  || _isMark INSTALLED NOT_IMPLEMENTED ${SUB}
         then
             sh ${SUB} install-start
