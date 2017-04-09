@@ -35,7 +35,10 @@ start() {
         echo "zone start ${ZONE} $FILE"
         if ! aws route53 change-resource-record-sets --hosted-zone-id ${ZONE} --change-batch file://${FILE}
         then
+            logger -t dare-sm ERROR failed start ${FILE}
             RRC=$?
+        else
+            logger -t dare-sm INFO success start ${FILE}
         fi
     done
     return $RRC
@@ -48,7 +51,10 @@ stop() {
         echo "zone stop ${ZONE} $FILE"
         if ! aws route53 change-resource-record-sets --hosted-zone-id ${ZONE} --change-batch file://${FILE}
         then
+            logger -t dare-sm ERROR failed stop ${FILE}
             RRC=$?
+        else
+            logger -t dare-sm INFO success stop ${FILE}
         fi
     done
     return $RRC

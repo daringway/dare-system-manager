@@ -74,7 +74,7 @@ function success {
 }
 function failed {
     echo "  failed $*"
-    logger $LOGPREFIX WARN failed $*
+    logger $LOGPREFIX ERROR failed $*
 }
 function info {
     echo "  $*"
