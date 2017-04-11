@@ -1,70 +1,51 @@
 #!/bin/sh
 
-# This works in conjunction with route53-init
+# change the hostname to ec2 Name tag plus the last octet of the local or public IPv4 address
 #
-# Similar to Route53Hostname but the FQDN name is specified.
+# TAG Values
+# prefix=string
+# ipv4lo=(public | private)      #IPV4 Last Octet
 #
-# Tag: Route53FQDN
-# Values: comma separated of KEY:VALUE pairs
-# Examples:
-#   FQDN:IP-type
-#   bugs.acme.com:public       -- Uses the public-ipv4
-#   bugs.acme.com:public-ipv4  -- Uses the public-ipv4
-#   bugs.acme.com:local-ipv4   -- Uses the local-ipv4
-#   bugs.acme.com:local        -- Uses the local-ipv4
+# Both Tags are required.
 #
-# Sets the hostname bugs in the Zone acme.com to the public or local ipv4 address.
+# Known Issue:  Can not be used with EIP as the isn't attached until start occurs and this HostnameRename
+#               occurs during install phase
 
 . /etc/default/dare-sm
 
-# "Action": "CREATE"|"DELETE"|"UPSERT",
-JSON='
-{
-  "Comment": "Updated by dare-sm 80-Route53ARecord",
-  "Changes": [
-    {
-      "Action": "X-ACTION-X",
-      "ResourceRecordSet": {
-        "Name": "X-FQDN-X",
-        "Type": "A",
-        "TTL": 60,
-        "ResourceRecords": [
-          {
-            "Value": "X-IP-X"
-          }
-        ]
-      }
-    }
-  ]
-}
-'
-
 install() {
-    ZONE=$(aws route53 list-hosted-zones --query "HostedZones[?Name==\`${DOMAIN}\`].[Id]"  --output text)
-    my-ec2 instance-tag Route53Hostname |perl -pe 's/:/ /g, s/,/\n/g'  | while read FQDN IPTYPE
-    do
-        if [[ "$FQDN" != *. ]]
-        then
-            FQDN=${FQDN}.
-        fi
-        if [[ "$( echo ${IPTYPE} | tr A-Z a-z)" == public-ipv4 ]]
-        then
-            export IP4=$(my-ec2 public-ipv4)
-        else
-            export IP4=$(my-ec2 local-ipv4)
-        fi
 
+    TAGS=$(my-ec2 instance-tag HostnameRename)
 
-        JSON_FILE=${DARE_ETC}/route53-start_${FQDN}json
-        echo $JSON | perl -pe 's/X-ACTION-X/CREATE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{IP4}/;' > $JSON_FILE
+    PREFIX=$( echo $TAGS | perl -ne '/prefix=([^,\n\s]+)/ && print $1;')
+    IPV4=$( echo $TAGS | perl -ne '/ipv4lo=([^,\n\s]+)/ && print $1;')
 
-        JSON_FILE=${DARE_ETC}/route53-stop_${FQDN}json
-        echo $JSON | perl -pe 's/X-ACTION-X/DELETE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{IP4}/;' > $JSON_FILE
-    done
+    if [ -z "$PREFIX" ]
+    then
+        logger -s -t dare-sm ERROR HostnameRename tag must include prefix
+        return 1
+    fi
 
-    return 0
+    if [[ "$IPV4" == "public" ]]
+    then
+        ADDR4=$(my-ec2 public-ipv4 | cut -d. -f4)
+    elif [[ "$IPV4" == "private" ]]
+    then
+        ADDR4=$(my-ec2 local-ipv4 | cut -d. -f4)
+    else
+        logger -s -t dare-sm ERROR HostnameRename tag must include ipv4
+        return 1
+    fi
+
+    export NEWHOSTNAME="${PREFIX}$(printf "%03d" ${ADDR4})"
+
+    hostname $NEWHOSTNAME
+    echo $NEWHOSTNAME > /etc/hostname
+    aws ec2 create-tags --resources $(my-ec2 instance-id) --tags Key=Name,Value=${NEWHOSTNAME}
+
+    perl -i -pe 's/HOSTNAME=.*$/HOSTNAME=$ENV{NEWHOSTNAME}/' /etc/sysconfig/network
+    return $?
 }
-
 upgrade() {
     return ${RC_NOT_IMPLEMENTED}
 }
@@ -94,6 +75,7 @@ restart() {
         return $?
     fi
 }
+
 case "$1" in
     install)
         install

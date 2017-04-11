@@ -1,0 +1,240 @@
+#!/bin/sh
+
+#
+# Sets the DNS record <Instance Tag Name>.<Domain> or the specified FQDN
+# to the public or private IPv4 address.  In a autoscaling group can be used with
+# HostnameRename to dynamically set the hostname to the a prefix + last octet of IP address
+#
+# Multiple DNS entries can be configured by separating TagSets with a ;
+#
+# TagSet: (* required)
+#   domain=<domain name>   # will use hostname
+#   fqdn=<domain name>
+#   ipv4=( public or private )
+#
+# domain or fqdn is required
+# ipv4 is required
+#
+# Example
+#   Name=bugs
+#   Route53e := domain=acme.com,ipv4=public;fqdn=roadrunner.acme.com,ipv4=private
+#
+# Process Overview
+# 1) During install 2 files are created for each TagSet.
+#      /etc/daring/route53-start-FQDN.json
+#      /etc/daring/route53-stop-FQDN.json
+# 2) During install-start or start or system boot
+#      each start file in /etc/daring/ is used to set the Route53 entry
+# 3) During install-stop or stop or system shutdown (AWS Terminate Instance)
+#      each stop file in /etc/daring is used to remove the Route53 entry
+#
+
+. /etc/default/dare-sm
+
+# "Action": "CREATE"|"DELETE"|"UPSERT",
+JSON='
+{
+  "Comment": "Updated by dare-sm 80-Route53ARecord",
+  "Changes": [
+    {
+      "Action": "X-ACTION-X",
+      "ResourceRecordSet": {
+        "Name": "X-FQDN-X",
+        "Type": "A",
+        "TTL": 60,
+        "ResourceRecords": [
+          {
+            "Value": "X-IP-X"
+          }
+        ]
+      }
+    }
+  ]
+}
+'
+
+getZone() {
+    local DOMAIN=$(echo $1 | perl -pe 's/^.*_[^_.]+\.([^_]+\.)json/$1/' )
+    aws route53 list-hosted-zones --query "HostedZones[?Name==\`${DOMAIN}\`].[Id]"  --output text
+}
+
+install() {
+
+    TAGS=$(my-ec2 instance-tag Route53)
+    RRC=0
+    for TAGSET in $(my-ec2 instance-tag Route53 | perl -pe 's/;/ /')
+    do
+        DOMAIN=$( echo $TAGSET | perl -ne '/domain=([^,\n\s]+)/ && print $1;')
+        FQDN=$(   echo $TAGSET | perl -ne '/fqdn=([^,\n\s]+)/   && print $1;')
+        IPV4=$(   echo $TAGSET | perl -ne '/ipv4=([^,\n\s]+)/   && print $1;')
+
+        if [ ! -z  "$FQDN" ]
+        then
+            if [[ "$FQDN" != *. ]]
+            then
+                FQDN=${FQDN}.
+            fi
+        elif [ ! -z  "${DOMAIN}" ]
+        then
+            if [[ "$DOMAIN" != *. ]]
+            then
+                DOMAIN=${DOMAIN}.
+            fi
+            FQDN=$(hostname).${DOMAIN}
+        else
+            logger -s -t dare-sm "ERROR Route53 tag must include (domain | fqdn )"
+            RRC=1
+            continue
+        fi
+
+        if [[ "$IPV4" == "public" ]]
+        then
+             ADDR4=$(my-ec2 public-ipv4)
+        elif [[ "$IPV4" == "private" ]]
+        then
+            ADDR4=$(my-ec2 local-ipv4)
+        else
+            logger -s -t dare-sm "ERROR Route53 tag must inlude ipv4=(public | private)"
+            RRC=1
+            continue
+        fi
+
+        export FQDN ADDR4
+
+        JSON_FILE=${DARE_ETC}/route53-start_${FQDN}json
+        echo $JSON | perl -pe 's/X-ACTION-X/CREATE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{ADDR4}/;' > $JSON_FILE
+
+        JSON_FILE=${DARE_ETC}/route53-stop_${FQDN}json
+        echo $JSON | perl -pe 's/X-ACTION-X/DELETE/; s/X-FQDN-X/$ENV{FQDN}/; s/X-IP-X/$ENV{ADDR4}/;' > $JSON_FILE
+    done
+
+    return $RRC
+}
+
+#install() {
+#    return ${RC_NOT_IMPLEMENTED}
+#}
+upgrade() {
+    return 3
+}
+# Used by dare-sm during install/upgrade
+installStart() {
+    start
+    return $?
+}
+# Used by dare-sm during install/upgrade
+installStop() {
+    stop
+    return $?
+}
+
+status() {
+    return 4
+}
+start() {
+    RRC=0
+    for FILE in $(ls ${DARE_ETC}/route53-start_*.json 2>/dev/null)
+    do
+        ZONE=$(getZone $FILE)
+        echo "zone start ${ZONE} $FILE"
+        if ! aws route53 change-resource-record-sets --hosted-zone-id ${ZONE} --change-batch file://${FILE}
+        then
+            logger -s -t dare-sm ERROR failed start ${FILE}
+            RRC=$?
+        else
+            logger -s -t dare-sm INFO success start ${FILE}
+        fi
+    done
+    return $RRC
+}
+stop() {
+    RRC=0
+    for FILE in $(ls ${DARE_ETC}/route53-stop_*.json 2>/dev/null)
+    do
+        ZONE=$(getZone $FILE)
+        echo "zone stop ${ZONE} $FILE"
+        if ! aws route53 change-resource-record-sets --hosted-zone-id ${ZONE} --change-batch file://${FILE}
+        then
+            logger -s -t dare-sm ERROR failed stop ${FILE}
+            RRC=$?
+        else
+            logger -s -t dare-sm INFO success stop ${FILE}
+        fi
+    done
+    return $RRC
+}
+restart() {
+    if stop
+    then
+        start
+        return $?
+    else
+        return $?
+    fi
+}
+
+case "$1" in
+    install)
+        install
+        RETVAL=$?
+	;;
+	upgrade)
+	    upgrade
+	    RETVAL=$?
+    ;;
+    install-start)
+        installStart
+        RETVAL=$?
+	;;
+    install-stop)
+        installStop
+        RETVAL=$?
+	;;
+	start)
+        start
+        RETVAL=$?
+    ;;
+    stop)
+        stop
+        RETVAL=$?
+	;;
+	restart)
+        restart
+        RETVAL=$?
+    ;;
+    status)
+        status
+        RETVAL=$?
+	;;
+    *)
+        echo "$0: $1 option not implemented"
+        echo "Usage: $0 {install|upgrade|start|stop|restart|status}"
+        RETVAL=3
+	;;
+esac
+
+exit ${RETVAL}
+
+# LSB RC (Return Codes) for all commands but status:
+# 0	 - success
+# 1  - generic or unspecified error
+# 2  - invalid or excess argument(s)
+# 3  - unimplemented feature (e.g. "reload")
+# 4  - user had insufficient privileges
+# 5  - program is not installed
+# 6  - program is not configured
+# 7  - program is not running
+# 8--199  - reserved (8--99 LSB, 100--149 distrib, 150--199 appl)
+#
+# Note that starting an already running service, stopping
+# or restarting a not-running service as well as the restart
+# with force-reload (in case signaling is not supported) are
+# considered a success.
+#
+# LSB RC for status command:
+# 0 - service up and running
+# 1 - service dead, but /var/run/  pid  file exists
+# 2 - service dead, but /var/lock/ lock file exists
+# 3 - service not running (unused)
+# 4 - service status unknown :-(
+# 5--199 reserved (5--99 LSB, 100--149 distro, 150--199 appl.)
