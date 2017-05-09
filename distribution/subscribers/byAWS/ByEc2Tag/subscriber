@@ -1,6 +1,14 @@
 #!/usr/bin/env sh
 
 # Subscribe based on EC2 Tags or shell VARIABLES
+#
+# This checks all TAGs on an EC2 instance.   The tag Value is in the comma separated list.
+# Format   TAG  = VALUE1,VALUE2
+# Will Match the following script patters
+#  ##-TAG
+#  ##-TAG-VALUE1
+#  ##-TAG-VALUE2
+#
 
 export AWS_DEFAULT_REGION=$(curl -s --connect-timeout 3 -s http://169.254.169.254/latest/dynamic/instance-identity/document/ | perl -ne '/region"\s+:\s+"([^"]+)/ && print $1')
 

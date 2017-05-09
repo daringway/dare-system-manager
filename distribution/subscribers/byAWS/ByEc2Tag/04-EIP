@@ -1,17 +1,17 @@
 #!/bin/sh
 
+# This needs to come before HostnameRename in case that public IP address is used in naming
+
 . /etc/default/dare-sm
 
 install() {
-    return ${RC_NOT_IMPLEMENTED}
+    start
+    return $?
 }
 upgrade() {
     return ${RC_NOT_IMPLEMENTED}
 }
 
-status() {
-    return 4
-}
 start() {
     ADDR=$(my-ec2 instance-tag EIP)
     #TODO add 172 private ranges
@@ -57,6 +57,30 @@ restart() {
     fi
 }
 
+# Used by dare-sm during install/upgrade
+installStart() {
+    # This is handled in install since we want the EIP as soon as possible.
+    return 3
+}
+# Used by dare-sm during install/upgrade
+installStop() {
+    stop
+    return $?
+}
+
+status() {
+    return 4
+}
+restart() {
+    if stop
+    then
+        start
+        return $?
+    else
+        return $?
+    fi
+}
+
 case "$1" in
     install)
         install
@@ -67,11 +91,11 @@ case "$1" in
 	    RETVAL=$?
     ;;
     install-start)
-        start
+        installStart
         RETVAL=$?
 	;;
     install-stop)
-        stop
+        installStop
         RETVAL=$?
 	;;
 	start)
